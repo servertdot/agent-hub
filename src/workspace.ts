@@ -8,7 +8,7 @@ import {
   symlink,
   unlink,
 } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, join } from "node:path";
 import { existsSync } from "node:fs";
 import { listSkillDirs } from "./adapters/fs-skills.ts";
 import type { OpResult, Profile } from "./types.ts";
