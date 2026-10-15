@@ -7,16 +7,19 @@ import {
   ensureHubLayout,
   loadConfig,
   loadMcpCatalog,
+  loadProfile,
   saveProfile,
 } from "./config.ts";
 import { discoverMatrix } from "./discover.ts";
 import { harnessPaths, hubMcpCatalogPath } from "./paths.ts";
+import { scrubMcpCatalog, scrubMcpServer, type ScrubHit } from "./secrets.ts";
 import {
   HARNESSES,
   McpCatalogSchema,
   type HarnessId,
   type McpCatalog,
   type McpServer,
+  type Profile,
 } from "./types.ts";
 
 function asMcpServer(raw: unknown): McpServer | null {
@@ -55,12 +58,18 @@ function asMcpServer(raw: unknown): McpServer | null {
 /** Merge MCP server defs from JSON harness files into the hub catalog. */
 export async function importMcpCatalog(opts?: {
   overwrite?: boolean;
-}): Promise<{ added: string[]; skipped: string[]; path: string }> {
+}): Promise<{
+  added: string[];
+  skipped: string[];
+  scrubbed: ScrubHit[];
+  path: string;
+}> {
   await ensureHubLayout();
   const cfg = await loadConfig();
   const catalog = await loadMcpCatalog();
   const added: string[] = [];
   const skipped: string[] = [];
+  const scrubbed: ScrubHit[] = [];
 
   const ads = enabledAdapters(cfg.harnesses);
   for (const ad of ads) {
@@ -77,14 +86,77 @@ export async function importMcpCatalog(opts?: {
         skipped.push(`${name} (${ad.id}, unparseable)`);
         continue;
       }
-      catalog.mcpServers[name] = parsed;
+      const { server, hits } = scrubMcpServer(name, parsed);
+      catalog.mcpServers[name] = server;
+      scrubbed.push(...hits);
       added.push(`${name} ← ${ad.id}`);
+    }
+  }
+
+  // Always re-scrub the whole catalog so older plaintext entries get cleaned.
+  const pass = scrubMcpCatalog(catalog.mcpServers);
+  catalog.mcpServers = pass.servers;
+  for (const hit of pass.hits) {
+    if (!scrubbed.some((h) => h.path === hit.path && h.to === hit.to)) {
+      scrubbed.push(hit);
     }
   }
 
   const next: McpCatalog = McpCatalogSchema.parse(catalog);
   await writeFile(hubMcpCatalogPath(), stringifyYaml(next), "utf8");
-  return { added, skipped, path: hubMcpCatalogPath() };
+  return { added, skipped, scrubbed, path: hubMcpCatalogPath() };
+}
+
+/** Rewrite catalog replacing pasted secrets with $ENV refs. */
+export async function scrubExistingCatalog(): Promise<{
+  hits: ScrubHit[];
+  path: string;
+}> {
+  await ensureHubLayout();
+  const catalog = await loadMcpCatalog();
+  const { servers, hits } = scrubMcpCatalog(catalog.mcpServers);
+  const next: McpCatalog = McpCatalogSchema.parse({ mcpServers: servers });
+  await writeFile(hubMcpCatalogPath(), stringifyYaml(next), "utf8");
+  return { hits, path: hubMcpCatalogPath() };
+}
+
+/**
+ * Seed lab from stable (or current discovery), then turn on a small omp-only
+ * experimental skill set so the profile is clearly distinct.
+ */
+export async function seedLabProfile(opts?: {
+  from?: string;
+}): Promise<{ path: string; extras: string[] }> {
+  const fromName = opts?.from ?? "stable";
+  let base: Profile;
+  try {
+    base = await loadProfile(fromName);
+  } catch {
+    await captureProfileFromDiscovery(fromName);
+    base = await loadProfile(fromName);
+  }
+
+  const extras = ["prototype", "research", "grilling", "diagnose", "tdd"];
+  const skills = { ...base.skills };
+  for (const name of extras) {
+    const prev = skills[name] ?? {
+      cursor: false,
+      claude: false,
+      codex: false,
+      pi: false,
+      omp: false,
+    };
+    skills[name] = { ...prev, omp: true };
+  }
+
+  const path = await saveProfile({
+    name: "lab",
+    description:
+      "Experimental — cloned from stable; extra skills enabled on omp only. Edit in TUI before applying broadly.",
+    skills,
+    mcp: { ...base.mcp },
+  });
+  return { path, extras };
 }
 
 /** Snapshot discovery into a full boolean matrix profile. */

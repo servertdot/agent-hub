@@ -20,6 +20,8 @@ import type { TuiResult } from "./tui/types.ts";
 import {
   captureProfileFromDiscovery,
   importMcpCatalog,
+  scrubExistingCatalog,
+  seedLabProfile,
 } from "./import-catalog.ts";
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -166,13 +168,33 @@ const main = defineCommand({
             console.log(`saved ${path}`);
           },
         }),
+        "seed-lab": defineCommand({
+          meta: {
+            description:
+              "Clone stable (or --from) into lab and enable a few skills on omp",
+          },
+          args: {
+            from: {
+              type: "string",
+              description: "Source profile name",
+              default: "stable",
+            },
+          },
+          async run({ args }) {
+            const { path, extras } = await seedLabProfile({
+              from: String(args.from),
+            });
+            console.log(`saved ${path}`);
+            console.log(`omp extras: ${extras.join(", ")}`);
+          },
+        }),
       },
     }),
 
     "import-mcp": defineCommand({
       meta: {
         description:
-          "Import MCP server defs from JSON harness configs into ~/.agent-hub/catalog/mcp.yaml",
+          "Import MCP server defs from JSON harness configs into ~/.agent-hub/catalog/mcp.yaml (secrets → $ENV)",
       },
       args: {
         overwrite: {
@@ -181,7 +203,7 @@ const main = defineCommand({
         },
       },
       async run({ args }) {
-        const { added, skipped, path } = await importMcpCatalog({
+        const { added, skipped, scrubbed, path } = await importMcpCatalog({
           overwrite: Boolean(args.overwrite),
         });
         console.log(`catalog: ${path}`);
@@ -192,6 +214,27 @@ const main = defineCommand({
           for (const s of skipped.slice(0, 20)) console.log(`  ${s}`);
           if (skipped.length > 20) console.log(`  … ${skipped.length - 20} more`);
         }
+        if (scrubbed.length) {
+          console.log(`scrubbed secrets (${scrubbed.length}):`);
+          for (const h of scrubbed) console.log(`  ${h.path} → ${h.to}`);
+        }
+      },
+    }),
+
+    "scrub-catalog": defineCommand({
+      meta: {
+        description:
+          "Replace pasted secrets in ~/.agent-hub/catalog/mcp.yaml with $ENV refs",
+      },
+      async run() {
+        const { hits, path } = await scrubExistingCatalog();
+        console.log(`catalog: ${path}`);
+        if (!hits.length) {
+          console.log("no secrets found");
+          return;
+        }
+        console.log(`scrubbed (${hits.length}):`);
+        for (const h of hits) console.log(`  ${h.path}: ${h.from} → ${h.to}`);
       },
     }),
 
