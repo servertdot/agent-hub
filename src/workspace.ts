@@ -262,14 +262,7 @@ export async function syncWorkspace(
   for (const name of desired) {
     const lib = join(hubLibrarySkillsDir(), name);
     const dest = join(ws, name);
-    if (!existsSync(lib)) {
-      ops.push({
-        action: "workspace-link",
-        status: "skipped",
-        detail: `${name}: not in library (${lib})`,
-      });
-      continue;
-    }
+    // Profile-private real copy (from skill install) — already present.
     if (existsSync(dest)) {
       if (await isSymlink(dest)) {
         ops.push({
@@ -281,8 +274,16 @@ export async function syncWorkspace(
       }
       ops.push({
         action: "workspace-link",
+        status: "ok",
+        detail: `${name}: profile-private package in workspace`,
+      });
+      continue;
+    }
+    if (!existsSync(lib)) {
+      ops.push({
+        action: "workspace-link",
         status: "skipped",
-        detail: `${name}: real dir in workspace, leave alone`,
+        detail: `${name}: not in library (${lib})`,
       });
       continue;
     }
@@ -378,7 +379,14 @@ export async function installSkillToWorkspace(opts: {
   const name = basename(source);
   const skillMd = join(source, "SKILL.md");
   if (!existsSync(skillMd)) {
-    throw new Error(`not a skill directory (missing SKILL.md): ${source}`);
+    const cwd = process.cwd();
+    const hint =
+      opts.sourcePath.startsWith(".") || !opts.sourcePath.startsWith("/")
+        ? ` (resolved from cwd ${cwd})`
+        : "";
+    throw new Error(
+      `not a skill directory (missing SKILL.md): ${source}${hint}`,
+    );
   }
 
   const owners = await findSkillOwners(name);
