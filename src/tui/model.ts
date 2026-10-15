@@ -265,11 +265,12 @@ export function stagedToProfileMaps(state: ViewState): {
 
 /**
  * Full boolean matrix for the working profile (every discovered row × harness).
- * Missing / unknown cells become false.
+ * Keeps profile entries that are not in the current row list (so a stale/partial
+ * discover cannot wipe skills on save).
  */
 export function buildFullProfile(state: ViewState, description?: string): Profile {
-  const skills: Profile["skills"] = {};
-  const mcp: Profile["mcp"] = {};
+  const skills: Profile["skills"] = { ...(state.profile?.skills ?? {}) };
+  const mcp: Profile["mcp"] = { ...(state.profile?.mcp ?? {}) };
 
   for (const row of state.rows) {
     const flags = {} as Record<HarnessId, boolean>;
@@ -296,11 +297,13 @@ export function buildFullProfile(state: ViewState, description?: string): Profil
 export function loadProfileIntoState(
   state: ViewState,
   profile: Profile,
+  rows?: MatrixRow[],
 ): ViewState {
   return {
     ...state,
     profileName: profile.name,
     profile,
+    rows: rows ?? state.rows,
     staged: new Map(),
     cursor: 0,
   };

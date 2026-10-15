@@ -10,7 +10,9 @@ import {
 import { listSkillDirs, setSkillLink } from "./fs-skills.ts";
 import { listJsonMcp, setJsonMcp } from "./json-mcp.ts";
 import { listTomlMcp, setTomlMcp } from "./toml-mcp.ts";
-import { loadMcpCatalog } from "../config.ts";
+import { getActiveProfile, loadMcpCatalog } from "../config.ts";
+import { resolveMcpCatalogForProfile } from "../profile-mcp.ts";
+import { resolveSkillSource } from "../workspace.ts";
 
 /** Primary skill install dir per harness (where we symlink on enable). */
 function skillTargetDir(id: HarnessId): string {
@@ -51,11 +53,8 @@ function makeAdapter(id: HarnessId): HarnessAdapter {
       return listJsonMcp(file, id);
     },
     async setSkill(name, enabled, dryRun) {
-      const discovered = await listSkillDirs(
-        [hubLibrarySkillsDir(), skillTargetDir(id)],
-        "catalog",
-      );
-      const src = discovered.find((s) => s.name === name)?.path;
+      const active = await getActiveProfile();
+      const src = await resolveSkillSource(name, active);
       return setSkillLink({
         harness: id,
         targetDir: skillTargetDir(id),
@@ -77,7 +76,10 @@ function makeAdapter(id: HarnessId): HarnessAdapter {
           detail: "no mcp file mapped",
         };
       }
-      const catalog = await loadMcpCatalog();
+      const active = await getActiveProfile();
+      const catalog = active
+        ? await resolveMcpCatalogForProfile(active)
+        : await loadMcpCatalog();
       const catalogEntry = catalog.mcpServers[name];
       if (file.endsWith(".toml")) {
         return setTomlMcp({

@@ -23,10 +23,12 @@ A **profile** is an active **workspace**. Switching profile changes which skills
   state.json                # active profile
 ```
 
-- **Library** — global package store. Installs land here.
-- **Workspace** — skills that belong to the active profile (any harness `true`).
-- **Apply** — parks shared `~/.agents/skills` (empty), syncs workspace, then projects symlinks into each harness skill dir per matrix.
-- **Install** — `agent-hub skill install <path>` → library + active workspace (+ profile flags).
+- **Workspace** — profile-private skills (`workspaces/<profile>/skills/`) and MCP (`workspaces/<profile>/mcp.yaml`).
+- **Library** — migrate leftovers / orphans only (not where new installs go).
+- **Apply** — parks shared `~/.agents/skills` (empty), syncs workspace, projects into harness dirs.
+- **Install / remove** — only the active profile. Same name in another profile or library → **conflict**.
+- **Adopt** — claim an orphan library skill / global MCP into the active profile.
+- **Sync / watch** — external installs in `~/.agents/skills` **and** harness dirs (`~/.cursor/skills`, `~/.codex/skills`, `~/.pi/agent/skills`, …) move into the **active** profile. Hub symlinks are ignored. Switching profile keeps those skills only on the previous profile.
 
 `~/.agents/skills` is **parked empty** on purpose: pi/Cursor/Codex also auto-load that path, so a shared pool would leak skills across profiles. Live skills live only in harness-private dirs.
 
@@ -62,6 +64,15 @@ agent-hub profile seed-lab     # clone stable → lab + omp extras
 agent-hub diff lab             # dry-run (hides noops; -v for full)
 agent-hub apply lab            # activate workspace + project to harnesses
 agent-hub skill install ./my-skill --apply
+agent-hub skill remove my-skill --apply
+agent-hub skill adopt orphan-name --apply
+agent-hub skill copy pdf-reader --from stable --to lab --apply
+agent-hub skill copy --all --from stable --to lab --apply
+agent-hub sync                 # ~/.agents/skills → active profile (after npx skills add)
+agent-hub sync --apply
+agent-hub watch                # auto-sync ~/.agents/skills into active profile
+agent-hub mcp install ./server.yaml --name fff --apply
+agent-hub mcp remove fff --apply
 agent-hub tui                  # Ink matrix on a TTY
 agent-hub tui --menu           # numbered fallback (also used without TTY)
 agent-hub tui --dry-run

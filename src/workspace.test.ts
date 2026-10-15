@@ -97,9 +97,15 @@ describe("workspace model", () => {
     expect(st.isSymbolicLink()).toBe(true);
   });
 
-  test("installSkillToWorkspace copies into library and links workspace", async () => {
+  test("installSkillToWorkspace copies into profile workspace only", async () => {
     const srcRoot = join(home, "incoming");
     await makeSkill(srcRoot, "new-skill");
+    await mkdir(join(home, ".agent-hub", "profiles"), { recursive: true });
+    await writeFile(
+      join(home, ".agent-hub", "profiles", "stable.yaml"),
+      "name: stable\nskills: {}\nmcp: {}\n",
+      "utf8",
+    );
 
     const { ops, name } = await installSkillToWorkspace({
       sourcePath: join(srcRoot, "new-skill"),
@@ -108,12 +114,10 @@ describe("workspace model", () => {
     });
     expect(name).toBe("new-skill");
     expect(ops.length).toBeGreaterThan(0);
-    expect(existsSync(join(hubLibrarySkillsDir(), "new-skill", "SKILL.md"))).toBe(
-      true,
-    );
-    expect(existsSync(join(hubWorkspaceSkillsDir("stable"), "new-skill"))).toBe(
-      true,
-    );
+    expect(existsSync(join(hubLibrarySkillsDir(), "new-skill"))).toBe(false);
+    expect(
+      existsSync(join(hubWorkspaceSkillsDir("stable"), "new-skill", "SKILL.md")),
+    ).toBe(true);
   });
 
   test("migrate absorbs real harness skill dirs into library", async () => {

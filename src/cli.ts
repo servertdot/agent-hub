@@ -18,6 +18,7 @@ import {
 } from "./discover.ts";
 import { sortByCost } from "./cost.ts";
 import {
+  agentsSkillsPath,
   hubDir,
   hubLibrarySkillsDir,
   hubWorkspaceSkillsDir,
@@ -25,13 +26,26 @@ import {
 import { adapters } from "./adapters/index.ts";
 import { HARNESSES, type HarnessId } from "./types.ts";
 import {
+  adoptSkillFromLibrary,
+  copySkillsBetweenProfiles,
   formatWorkspaceOps,
   installSkillToWorkspace,
   listLibrarySkills,
   listWorkspaceSkills,
   migrateSkillsToLibrary,
   ensureSharedParked,
+  removeSkillFromWorkspace,
 } from "./workspace.ts";
+import {
+  adoptMcpFromGlobal,
+  installMcpToProfile,
+  loadWorkspaceMcpCatalog,
+  removeMcpFromProfile,
+} from "./profile-mcp.ts";
+import { NameConflictError } from "./ownership.ts";
+import type { McpServer } from "./types.ts";
+import { readFile } from "node:fs/promises";
+import { parse as parseYaml } from "yaml";
 import { App } from "./tui/App.tsx";
 import { runNumberedMenu } from "./tui/menu.ts";
 import type { TuiResult } from "./tui/types.ts";
@@ -116,7 +130,7 @@ const main = defineCommand({
     migrate: defineCommand({
       meta: {
         description:
-          "Absorb ~/.agents/skills + real harness skill dirs into library; park shared pool empty",
+          "Absorb harness real skill dirs into library; shared ~/.agents is handled by sync → active profile",
       },
       args: {
         "dry-run": { type: "boolean", description: "Plan only" },
@@ -124,19 +138,149 @@ const main = defineCommand({
       async run({ args }) {
         await ensureHubLayout();
         const dryRun = Boolean(args["dry-run"]);
-        const ops = await migrateSkillsToLibrary({ dryRun });
-        const parked = await ensureSharedParked(dryRun);
-        console.log(formatWorkspaceOps([...ops, parked]));
+        const active = await getActiveProfile();
+        if (active) {
+          const {
+            formatSyncSharedResult,
+            syncSharedToActiveProfile,
+          } = await import("./sync-shared.ts");
+          const synced = await syncSharedToActiveProfile({
+            dryRun,
+            profileName: active,
+          });
+          console.log(formatSyncSharedResult(synced));
+        }
+        const ops = await migrateSkillsToLibrary({
+          dryRun,
+          skipShared: Boolean(active),
+          skipHarness: Boolean(active),
+        });
+        if (!active) {
+          const parked = await ensureSharedParked(dryRun);
+          console.log(formatWorkspaceOps([...ops, parked]));
+        } else {
+          console.log(formatWorkspaceOps(ops));
+        }
+      },
+    }),
+
+    sync: defineCommand({
+      meta: {
+        description:
+          "Absorb external skill installs (~/.agents + cursor/claude/codex/pi/omp) into the active profile",
+      },
+      args: {
+        profile: {
+          type: "string",
+          description: "Profile (default: active)",
+        },
+        apply: {
+          type: "boolean",
+          description: "Also project newly added skills onto harnesses",
+        },
+        "dry-run": { type: "boolean", description: "Plan only" },
+      },
+      async run({ args }) {
+        await ensureHubLayout();
+        const {
+          formatSyncSharedResult,
+          syncSharedToActiveProfile,
+        } = await import("./sync-shared.ts");
+        const active = await getActiveProfile();
+        const profileName =
+          (args.profile ? String(args.profile) : undefined) ?? active;
+        if (!profileName) {
+          throw new Error("no active profile — pass --profile");
+        }
+        const dryRun = Boolean(args["dry-run"]);
+        const synced = await syncSharedToActiveProfile({
+          dryRun,
+          profileName,
+        });
+        console.log(formatSyncSharedResult(synced));
+        if (args.apply && !dryRun && synced.added.length) {
+          const profile = await loadProfile(profileName);
+          console.log(formatResults(await applyProfile({ profile })));
+        } else if (synced.added.length && !args.apply && !dryRun) {
+          console.log(`next: agent-hub apply ${profileName}`);
+        }
+        if (synced.conflicts.length) {
+          process.exitCode = 2;
+        }
+      },
+    }),
+
+    watch: defineCommand({
+      meta: {
+        description:
+          "Watch ~/.agents + harness skill dirs; auto-sync into the active profile (Ctrl+C to stop)",
+      },
+      args: {
+        profile: {
+          type: "string",
+          description: "Lock sync target profile (default: re-read active each time)",
+        },
+        apply: {
+          type: "boolean",
+          description: "Apply profile after each successful sync with additions",
+        },
+      },
+      async run({ args }) {
+        await ensureHubLayout();
+        const {
+          externalSkillRoots,
+          formatSyncSharedResult,
+          watchSharedSkills,
+        } = await import("./sync-shared.ts");
+        const locked = args.profile ? String(args.profile) : undefined;
+        console.log(
+          `watching → profile ${locked ?? "(active)"}:\n${externalSkillRoots()
+            .map((r) => `  ${r.path}`)
+            .join("\n")}`,
+        );
+        const ac = new AbortController();
+        const onSig = () => ac.abort();
+        process.on("SIGINT", onSig);
+        process.on("SIGTERM", onSig);
+        try {
+          await watchSharedSkills({
+            signal: ac.signal,
+            profileName: locked,
+            onSync: async (result) => {
+              console.log(`\n[${new Date().toISOString()}]`);
+              console.log(formatSyncSharedResult(result));
+              if (
+                args.apply &&
+                result.added.length &&
+                !result.conflicts.length
+              ) {
+                const profile = await loadProfile(result.profileName);
+                console.log(formatResults(await applyProfile({ profile })));
+              }
+            },
+            onError: (err) => {
+              console.error(
+                err instanceof Error ? err.message : String(err),
+              );
+            },
+          });
+        } finally {
+          process.off("SIGINT", onSig);
+          process.off("SIGTERM", onSig);
+        }
       },
     }),
 
     skill: defineCommand({
-      meta: { description: "Install / list skills in library & active workspace" },
+      meta: {
+        description:
+          "Install/remove/adopt profile-private skills (name conflicts across profiles)",
+      },
       subCommands: {
         install: defineCommand({
           meta: {
             description:
-              "Copy a skill dir into library + active workspace; enable on hub harnesses; optional apply",
+              "Copy a skill dir into the active profile workspace only (conflicts if name exists elsewhere)",
           },
           args: {
             path: {
@@ -166,62 +310,198 @@ const main = defineCommand({
               );
             }
             const dryRun = Boolean(args["dry-run"]);
-            const { ops, name } = await installSkillToWorkspace({
-              sourcePath: String(args.path),
+            try {
+              const { ops, name } = await installSkillToWorkspace({
+                sourcePath: String(args.path),
+                profileName,
+                dryRun,
+              });
+              console.log(formatWorkspaceOps(ops));
+              await bumpSkillInProfile(profileName, name, cfg, dryRun);
+              if (args.apply) {
+                const profile = await loadProfile(profileName);
+                console.log(
+                  formatResults(await applyProfile({ profile, dryRun })),
+                );
+              } else if (!dryRun) {
+                console.log(`next: agent-hub apply ${profileName}`);
+              }
+            } catch (e) {
+              if (e instanceof NameConflictError) throw e;
+              throw e;
+            }
+          },
+        }),
+        remove: defineCommand({
+          meta: {
+            description:
+              "Delete a skill from the active profile workspace only (other profiles untouched)",
+          },
+          args: {
+            name: {
+              type: "positional",
+              required: true,
+              description: "Skill name",
+            },
+            profile: {
+              type: "string",
+              description: "Target profile (default: active)",
+            },
+            apply: {
+              type: "boolean",
+              description: "Apply profile after remove (unlinks harnesses)",
+            },
+            "dry-run": { type: "boolean", description: "Plan only" },
+          },
+          async run({ args }) {
+            await ensureHubLayout();
+            const active = await getActiveProfile();
+            const profileName =
+              (args.profile ? String(args.profile) : undefined) ?? active;
+            if (!profileName) {
+              throw new Error("no active profile — pass --profile");
+            }
+            const dryRun = Boolean(args["dry-run"]);
+            const name = String(args.name);
+            const { ops } = await removeSkillFromWorkspace({
+              name,
               profileName,
               dryRun,
             });
             console.log(formatWorkspaceOps(ops));
-
-            let profile = await loadProfile(profileName).catch(async () => {
-              const blank = {
-                name: profileName,
-                description: `workspace ${profileName}`,
-                skills: {},
-                mcp: {},
-              };
-              if (!dryRun) await saveProfile(blank);
-              return blank;
-            });
-
-            const flags: Record<HarnessId, boolean> = {
-              cursor: false,
-              claude: false,
-              codex: false,
-              pi: false,
-              omp: false,
-            };
-            for (const id of HARNESSES) {
-              flags[id] = cfg.harnesses[id] !== false;
-            }
-            profile = {
-              ...profile,
-              skills: { ...profile.skills, [name]: flags },
-            };
             if (!dryRun) {
-              await saveProfile(profile);
-              console.log(`updated profile ${profileName}: ${name} enabled`);
+              const profile = await loadProfile(profileName);
+              // Disable on harnesses first (omitted keys are left alone by apply).
+              const off: Record<HarnessId, boolean> = {
+                cursor: false,
+                claude: false,
+                codex: false,
+                pi: false,
+                omp: false,
+              };
+              const withOff = {
+                ...profile,
+                skills: { ...profile.skills, [name]: off },
+              };
+              if (args.apply) {
+                console.log(
+                  formatResults(await applyProfile({ profile: withOff })),
+                );
+              }
+              const skills = { ...profile.skills };
+              delete skills[name];
+              await saveProfile({ ...profile, skills });
+              console.log(`removed ${name} from profile ${profileName}`);
             }
-
-            if (args.apply) {
-              const results = await applyProfile({ profile, dryRun });
-              console.log(formatResults(results));
+          },
+        }),
+        adopt: defineCommand({
+          meta: {
+            description:
+              "Move an orphan library skill into the active profile workspace (claims the name)",
+          },
+          args: {
+            name: { type: "positional", required: true },
+            profile: { type: "string" },
+            apply: { type: "boolean" },
+            "dry-run": { type: "boolean" },
+          },
+          async run({ args }) {
+            await ensureHubLayout();
+            const cfg = await loadConfig();
+            const active = await getActiveProfile();
+            const profileName =
+              (args.profile ? String(args.profile) : undefined) ?? active;
+            if (!profileName) throw new Error("no active profile");
+            const dryRun = Boolean(args["dry-run"]);
+            const { ops, name } = await adoptSkillFromLibrary({
+              name: String(args.name),
+              profileName,
+              dryRun,
+            });
+            console.log(formatWorkspaceOps(ops));
+            await bumpSkillInProfile(profileName, name, cfg, dryRun);
+            if (args.apply && !dryRun) {
+              const profile = await loadProfile(profileName);
+              console.log(formatResults(await applyProfile({ profile })));
+            }
+          },
+        }),
+        copy: defineCommand({
+          meta: {
+            description:
+              "Copy skill(s) from one profile workspace into another (keeps source; copies flags)",
+          },
+          args: {
+            names: {
+              type: "positional",
+              required: false,
+              description:
+                "Skill name(s). Omit with --all to copy every skill from --from",
+            },
+            from: {
+              type: "string",
+              description: "Source profile (default: active)",
+            },
+            to: {
+              type: "string",
+              required: true,
+              description: "Target profile",
+            },
+            all: {
+              type: "boolean",
+              description: "Copy all skills from --from",
+            },
+            apply: {
+              type: "boolean",
+              description: "Apply the target profile after copy",
+            },
+            "dry-run": { type: "boolean" },
+          },
+          async run({ args }) {
+            await ensureHubLayout();
+            const active = await getActiveProfile();
+            const fromProfile =
+              (args.from ? String(args.from) : undefined) ?? active;
+            const toProfile = String(args.to);
+            if (!fromProfile) throw new Error("no source profile — pass --from");
+            const dryRun = Boolean(args["dry-run"]);
+            let names: string[] = [];
+            if (args.all) {
+              names = await listWorkspaceSkills(fromProfile);
             } else {
-              console.log(
-                dryRun
-                  ? "(dry-run) skip profile write / apply"
-                  : `next: agent-hub apply ${profileName}`,
-              );
+              const raw = args.names;
+              if (Array.isArray(raw)) names = raw.map(String);
+              else if (raw) names = [String(raw)];
+            }
+            if (!names.length) {
+              throw new Error("pass skill name(s) or --all");
+            }
+            const { ops, copied, skipped } = await copySkillsBetweenProfiles({
+              fromProfile,
+              toProfile,
+              names,
+              dryRun,
+            });
+            console.log(formatWorkspaceOps(ops));
+            console.log(
+              `copied: ${copied.length || 0}, skipped: ${skipped.length || 0}`,
+            );
+            if (args.apply && !dryRun && copied.length) {
+              const profile = await loadProfile(toProfile);
+              console.log(formatResults(await applyProfile({ profile })));
+            } else if (copied.length && !dryRun) {
+              console.log(`next: agent-hub apply ${toProfile}`);
             }
           },
         }),
         list: defineCommand({
-          meta: { description: "List library and active workspace skills" },
+          meta: { description: "List library orphans and active workspace skills" },
           async run() {
             await ensureHubLayout();
             const active = await getActiveProfile();
             const lib = await listLibrarySkills();
-            console.log(`library (${lib.length}):`);
+            console.log(`library orphans (${lib.length}):`);
             for (const n of lib) console.log(`  ${n}`);
             if (active) {
               const ws = await listWorkspaceSkills(active);
@@ -230,6 +510,187 @@ const main = defineCommand({
             } else {
               console.log("workspace: (no active profile)");
             }
+          },
+        }),
+      },
+    }),
+
+    mcp: defineCommand({
+      meta: {
+        description:
+          "Install/remove/adopt profile-private MCP defs (name conflicts across profiles)",
+      },
+      subCommands: {
+        install: defineCommand({
+          meta: {
+            description:
+              "Add an MCP server def into the active profile workspace catalog from a YAML/JSON file",
+          },
+          args: {
+            file: {
+              type: "positional",
+              required: true,
+              description:
+                "YAML/JSON file: { name?, mcpServers: { <name>: {...} } } or a single server object with --name",
+            },
+            name: {
+              type: "string",
+              description: "Server name (required if file is a single server object)",
+            },
+            profile: { type: "string" },
+            apply: { type: "boolean" },
+            "dry-run": { type: "boolean" },
+          },
+          async run({ args }) {
+            await ensureHubLayout();
+            const cfg = await loadConfig();
+            const active = await getActiveProfile();
+            const profileName =
+              (args.profile ? String(args.profile) : undefined) ?? active;
+            if (!profileName) throw new Error("no active profile");
+            const dryRun = Boolean(args["dry-run"]);
+            const raw = parseYaml(await readFile(String(args.file), "utf8")) as
+              | Record<string, unknown>
+              | null;
+            if (!raw || typeof raw !== "object") {
+              throw new Error("invalid MCP file");
+            }
+            const servers =
+              (raw.mcpServers as Record<string, McpServer> | undefined) ??
+              undefined;
+            const entries: Array<[string, McpServer]> = [];
+            if (servers) {
+              for (const [n, s] of Object.entries(servers)) entries.push([n, s]);
+            } else {
+              const n = args.name ? String(args.name) : undefined;
+              if (!n) {
+                throw new Error("pass --name when file is a single server object");
+              }
+              entries.push([n, raw as McpServer]);
+            }
+            for (const [name, server] of entries) {
+              const { path } = await installMcpToProfile({
+                profileName,
+                name,
+                server,
+                dryRun,
+              });
+              console.log(
+                dryRun
+                  ? `planned  mcp-install — ${name} → ${path}`
+                  : `ok       mcp-install — ${name} → ${path}`,
+              );
+              await bumpMcpInProfile(profileName, name, cfg, dryRun);
+            }
+            if (args.apply && !dryRun) {
+              const profile = await loadProfile(profileName);
+              console.log(formatResults(await applyProfile({ profile })));
+            }
+          },
+        }),
+        remove: defineCommand({
+          meta: {
+            description: "Remove an MCP def from the active profile workspace only",
+          },
+          args: {
+            name: { type: "positional", required: true },
+            profile: { type: "string" },
+            apply: { type: "boolean" },
+            "dry-run": { type: "boolean" },
+          },
+          async run({ args }) {
+            await ensureHubLayout();
+            const active = await getActiveProfile();
+            const profileName =
+              (args.profile ? String(args.profile) : undefined) ?? active;
+            if (!profileName) throw new Error("no active profile");
+            const dryRun = Boolean(args["dry-run"]);
+            const name = String(args.name);
+            const { removed, path } = await removeMcpFromProfile({
+              profileName,
+              name,
+              dryRun,
+            });
+            console.log(
+              removed
+                ? `${dryRun ? "planned" : "ok"}  mcp-remove — ${name} (${path})`
+                : `skipped  mcp-remove — ${name} not in profile catalog`,
+            );
+            if (!dryRun && removed) {
+              const profile = await loadProfile(profileName);
+              const off: Record<HarnessId, boolean> = {
+                cursor: false,
+                claude: false,
+                codex: false,
+                pi: false,
+                omp: false,
+              };
+              if (args.apply) {
+                console.log(
+                  formatResults(
+                    await applyProfile({
+                      profile: {
+                        ...profile,
+                        mcp: { ...profile.mcp, [name]: off },
+                      },
+                    }),
+                  ),
+                );
+              }
+              const mcp = { ...profile.mcp };
+              delete mcp[name];
+              await saveProfile({ ...profile, mcp });
+            }
+          },
+        }),
+        adopt: defineCommand({
+          meta: {
+            description:
+              "Copy a global-catalog MCP into the active profile workspace (claims the name)",
+          },
+          args: {
+            name: { type: "positional", required: true },
+            profile: { type: "string" },
+            apply: { type: "boolean" },
+            "dry-run": { type: "boolean" },
+          },
+          async run({ args }) {
+            await ensureHubLayout();
+            const cfg = await loadConfig();
+            const active = await getActiveProfile();
+            const profileName =
+              (args.profile ? String(args.profile) : undefined) ?? active;
+            if (!profileName) throw new Error("no active profile");
+            const dryRun = Boolean(args["dry-run"]);
+            const name = String(args.name);
+            const { path } = await adoptMcpFromGlobal({
+              profileName,
+              name,
+              dryRun,
+            });
+            console.log(
+              `${dryRun ? "planned" : "ok"}  mcp-adopt — ${name} → ${path}`,
+            );
+            await bumpMcpInProfile(profileName, name, cfg, dryRun);
+            if (args.apply && !dryRun) {
+              const profile = await loadProfile(profileName);
+              console.log(formatResults(await applyProfile({ profile })));
+            }
+          },
+        }),
+        list: defineCommand({
+          meta: { description: "List active profile workspace MCP defs" },
+          async run() {
+            await ensureHubLayout();
+            const active = await getActiveProfile();
+            if (!active) {
+              console.log("(no active profile)");
+              return;
+            }
+            const cat = await loadWorkspaceMcpCatalog(active);
+            const names = Object.keys(cat.mcpServers).sort();
+            console.log(`workspace ${active} mcp (${names.length}):`);
+            for (const n of names) console.log(`  ${n}`);
           },
         }),
       },
@@ -488,7 +949,6 @@ const main = defineCommand({
       async run({ args }) {
         await ensureHubLayout();
         const cfg = await loadConfig();
-        const rows = await discoverMatrix();
         const profileNames = await listProfiles();
         const active = await getActiveProfile();
         const profileName =
@@ -496,6 +956,7 @@ const main = defineCommand({
           active ??
           profileNames[0] ??
           "tui-session";
+        const rows = await discoverMatrix({ profileName });
 
         let profile: Awaited<ReturnType<typeof loadProfile>> | undefined;
         try {
@@ -553,5 +1014,69 @@ const main = defineCommand({
     }),
   },
 });
+
+async function bumpSkillInProfile(
+  profileName: string,
+  name: string,
+  cfg: Awaited<ReturnType<typeof loadConfig>>,
+  dryRun: boolean,
+): Promise<void> {
+  if (dryRun) return;
+  let profile = await loadProfile(profileName).catch(async () => {
+    const blank = {
+      name: profileName,
+      description: `workspace ${profileName}`,
+      skills: {},
+      mcp: {},
+    };
+    await saveProfile(blank);
+    return blank;
+  });
+  const flags: Record<HarnessId, boolean> = {
+    cursor: false,
+    claude: false,
+    codex: false,
+    pi: false,
+    omp: false,
+  };
+  for (const id of HARNESSES) {
+    flags[id] = cfg.harnesses[id] !== false;
+  }
+  profile = { ...profile, skills: { ...profile.skills, [name]: flags } };
+  await saveProfile(profile);
+  console.log(`updated profile ${profileName}: skill ${name} enabled`);
+}
+
+async function bumpMcpInProfile(
+  profileName: string,
+  name: string,
+  cfg: Awaited<ReturnType<typeof loadConfig>>,
+  dryRun: boolean,
+): Promise<void> {
+  if (dryRun) return;
+  let profile = await loadProfile(profileName).catch(async () => {
+    const blank = {
+      name: profileName,
+      description: `workspace ${profileName}`,
+      skills: {},
+      mcp: {},
+    };
+    await saveProfile(blank);
+    return blank;
+  });
+  const flags: Record<HarnessId, boolean> = {
+    cursor: false,
+    claude: false,
+    codex: false,
+    pi: false,
+    omp: false,
+  };
+  for (const id of HARNESSES) {
+    flags[id] = cfg.harnesses[id] !== false;
+  }
+  profile = { ...profile, mcp: { ...profile.mcp, [name]: flags } };
+  await saveProfile(profile);
+  console.log(`updated profile ${profileName}: mcp ${name} enabled`);
+}
 
 runMain(main);

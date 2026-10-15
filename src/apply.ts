@@ -1,8 +1,10 @@
 import { adapters, enabledAdapters } from "./adapters/index.ts";
 import { loadConfig, setActiveProfile } from "./config.ts";
+import {
+  syncSharedToActiveProfile,
+} from "./sync-shared.ts";
 import { HARNESSES, type HarnessId, type OpResult, type Profile } from "./types.ts";
 import {
-  ensureSharedParked,
   formatWorkspaceOps,
   migrateSkillsToLibrary,
   syncWorkspace,
@@ -26,13 +28,64 @@ export async function applyProfile(opts: ApplyOptions): Promise<OpResult[]> {
 
   const results: OpResult[] = [];
 
+  // Active early so shared sync + skill sources target this profile.
+  if (!dryRun) await setActiveProfile(profile.name);
+
   if (!skipWorkspacePrep) {
-    const migrated = await migrateSkillsToLibrary({ dryRun });
+    // ~/.agents + harness skill dirs (real installs) → active profile workspace
+    const synced = await syncSharedToActiveProfile({
+      dryRun,
+      profileName: profile.name,
+    });
+    results.push(...workspaceOpsAsResults(synced.ops));
+    for (const c of synced.conflicts) {
+      results.push({
+        harness: "pi",
+        kind: "skill",
+        name: c.name,
+        action: "enable",
+        status: "skipped",
+        detail: `external sync conflict — ${c.detail}`,
+      });
+    }
+
+    // Legacy leftover absorb disabled — sync owns agents + harness real dirs.
+    const migrated = await migrateSkillsToLibrary({
+      dryRun,
+      skipShared: true,
+      skipHarness: true,
+    });
     results.push(...workspaceOpsAsResults(migrated));
-    const parked = await ensureSharedParked(dryRun);
-    results.push(...workspaceOpsAsResults([parked]));
-    const wsOps = await syncWorkspace(profile, dryRun);
+
+    // Reload profile if sync added skills to YAML
+    let effective = profile;
+    if (!dryRun && synced.added.length) {
+      const { loadProfile } = await import("./config.ts");
+      effective = await loadProfile(profile.name);
+    }
+    const wsOps = await syncWorkspace(effective, dryRun);
     results.push(...workspaceOpsAsResults(wsOps));
+
+    // Project matrix — use effective so newly synced skills get harness links
+    for (const [name, flags] of Object.entries(effective.skills)) {
+      for (const id of HARNESSES) {
+        if (flags[id] === undefined) continue;
+        const ad = adapters[id];
+        if (!ads.includes(ad)) continue;
+        results.push(await ad.setSkill(name, flags[id]!, dryRun));
+      }
+    }
+
+    for (const [name, flags] of Object.entries(effective.mcp)) {
+      for (const id of HARNESSES) {
+        if (flags[id] === undefined) continue;
+        const ad = adapters[id];
+        if (!ads.includes(ad)) continue;
+        results.push(await ad.setMcp(name, flags[id]!, dryRun));
+      }
+    }
+
+    return results;
   }
 
   for (const [name, flags] of Object.entries(profile.skills)) {
@@ -53,7 +106,6 @@ export async function applyProfile(opts: ApplyOptions): Promise<OpResult[]> {
     }
   }
 
-  if (!dryRun) await setActiveProfile(profile.name);
   return results;
 }
 

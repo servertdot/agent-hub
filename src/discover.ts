@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { enabledAdapters } from "./adapters/index.ts";
 import { listSkillDirs } from "./adapters/fs-skills.ts";
-import { loadConfig, getActiveProfile } from "./config.ts";
+import { getActiveProfile, loadConfig, loadProfile } from "./config.ts";
 import {
   attachCosts,
   COST_FORMULA,
@@ -11,31 +13,58 @@ import {
 import {
   harnessSkillDir,
   hubLibrarySkillsDir,
+  hubWorkspaceMcpPath,
   hubWorkspaceSkillsDir,
 } from "./paths.ts";
+import { loadWorkspaceMcpCatalog } from "./profile-mcp.ts";
 import { HARNESSES, type HarnessId, type MatrixRow } from "./types.ts";
 
 /**
- * Build matrix:
- * - skill names = library ∪ active workspace ∪ harness skill dirs
- * - flags[h] = skill present in that harness's *owned* dir only
- * - mcp flags from each adapter's MCP file
+ * Build matrix for a profile workspace:
+ * - skill names = workspace ∪ profile YAML keys (via library) ∪ live harness dirs
+ * - flags[h] = present in harness owned dir
+ * - mcp = profile workspace catalog ∪ harness MCP files
  */
 export async function discoverMatrix(opts?: {
   withCosts?: boolean;
+  /** Profile whose workspace defines the skill/MCP universe (default: active). */
+  profileName?: string;
 }): Promise<MatrixRow[]> {
   const withCosts = opts?.withCosts !== false;
   const cfg = await loadConfig();
   const ads = enabledAdapters(cfg.harnesses);
-  const active = await getActiveProfile();
+  const profileName =
+    opts?.profileName ?? (await getActiveProfile()) ?? undefined;
 
   const allSkillRoots = [
-    hubLibrarySkillsDir(),
-    ...(active ? [hubWorkspaceSkillsDir(active)] : []),
+    ...(profileName ? [hubWorkspaceSkillsDir(profileName)] : []),
     ...HARNESSES.map((id) => harnessSkillDir(id)),
     ...(cfg.catalog.skillRoots ?? []),
   ];
   const universe = await listSkillDirs(allSkillRoots, "universe");
+
+  // Profile YAML may reference skills still only in library (e.g. after a bad save).
+  if (profileName) {
+    try {
+      const profile = await loadProfile(profileName);
+      const seen = new Set(universe.map((s) => s.name));
+      for (const name of Object.keys(profile.skills)) {
+        if (seen.has(name)) continue;
+        const lib = join(hubLibrarySkillsDir(), name);
+        const ws = join(hubWorkspaceSkillsDir(profileName), name);
+        const path = existsSync(join(ws, "SKILL.md"))
+          ? ws
+          : existsSync(join(lib, "SKILL.md"))
+            ? lib
+            : undefined;
+        if (!path) continue;
+        universe.push({ name, path, source: `profile:${profileName}` });
+        seen.add(name);
+      }
+    } catch {
+      // no profile file yet
+    }
+  }
 
   const ownedByHarness = new Map<HarnessId, Set<string>>();
   for (const ad of ads) {
@@ -56,6 +85,17 @@ export async function discoverMatrix(opts?: {
 
   const mcpMap = new Map<string, Partial<Record<HarnessId, boolean>>>();
   const mcpBasis = new Map<string, string>();
+
+  if (profileName) {
+    const local = await loadWorkspaceMcpCatalog(profileName);
+    for (const name of Object.keys(local.mcpServers)) {
+      const flags: Partial<Record<HarnessId, boolean>> = {};
+      for (const ad of ads) flags[ad.id] = false;
+      mcpMap.set(name, flags);
+      mcpBasis.set(name, hubWorkspaceMcpPath(profileName));
+    }
+  }
+
   for (const ad of ads) {
     const mcps = await ad.listMcp();
     for (const m of mcps) {

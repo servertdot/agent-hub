@@ -3,6 +3,7 @@ import { Box, Text, useApp, useInput, useStdout } from "ink";
 import type { HarnessId, MatrixRow, Profile } from "../types.ts";
 import { HARNESSES } from "../types.ts";
 import { loadProfile, saveConfig, saveProfile } from "../config.ts";
+import { discoverMatrix } from "../discover.ts";
 import { formatTok, liveTokenTotal } from "../cost.ts";
 import { glyphs, roles } from "./theme.ts";
 import type { TuiResult } from "./types.ts";
@@ -214,9 +215,14 @@ export function App({
     setBusy(true);
     try {
       const loaded = await loadProfile(name);
-      setState((s) => loadProfileIntoState(s, loaded));
+      const nextRows = await discoverMatrix({ profileName: name });
+      setState((s) => loadProfileIntoState(s, loaded, nextRows));
       setSideCursor(Math.max(0, names.indexOf(name)));
-      setFlash(dirty ? `loaded ${name} (discarded profile edits)` : `loaded ${name}`);
+      setFlash(
+        dirty
+          ? `loaded ${name} (${nextRows.filter((r) => r.kind === "skill").length} skills, discarded edits)`
+          : `loaded ${name} (${nextRows.filter((r) => r.kind === "skill").length} skills)`,
+      );
       setFocus("main");
       setMode("main");
     } catch (err) {

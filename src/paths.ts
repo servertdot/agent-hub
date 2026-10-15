@@ -52,9 +52,14 @@ export function hubWorkspaceDir(profile: string): string {
   return join(hubWorkspacesDir(), profile);
 }
 
-/** Skills belonging to a profile workspace (symlinks into library). */
+/** Skills belonging to a profile workspace (profile-private packages). */
 export function hubWorkspaceSkillsDir(profile: string): string {
   return join(hubWorkspaceDir(profile), "skills");
+}
+
+/** Per-profile MCP server definitions (SoT for that workspace). */
+export function hubWorkspaceMcpPath(profile: string): string {
+  return join(hubWorkspaceDir(profile), "mcp.yaml");
 }
 
 /** Shared Agent Skills path — must stay empty/parked; harnesses use private dirs. */

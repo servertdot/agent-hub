@@ -188,8 +188,12 @@ export async function runNumberedMenu(opts: {
         }
         try {
           const loaded = await loadProfile(arg);
-          state = loadProfileIntoState(state, loaded);
-          output.write(`loaded ${arg}\n`);
+          const { discoverMatrix } = await import("../discover.ts");
+          const nextRows = await discoverMatrix({ profileName: arg });
+          state = loadProfileIntoState(state, loaded, nextRows);
+          output.write(
+            `loaded ${arg} (${nextRows.filter((r) => r.kind === "skill").length} skills)\n`,
+          );
         } catch (err) {
           output.write(
             `load failed: ${err instanceof Error ? err.message : String(err)}\n`,
