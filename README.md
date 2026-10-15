@@ -34,6 +34,8 @@ agent-hub status
 agent-hub discover             # matrix of what is on this machine
 agent-hub import-mcp           # fill catalog/mcp.yaml from Cursor/Claude/OMP JSON
 agent-hub scrub-catalog        # replace pasted secrets with $ENV refs
+agent-hub scrub-harnesses      # dry-run scrub of Cursor/Claude/Codex/pi/OMP MCP files
+agent-hub scrub-harnesses --write
 agent-hub profile save stable  # capture current discovery into a profile
 agent-hub profile seed-lab     # clone stable → lab + omp extras
 agent-hub diff stable          # dry-run (hides noops; -v for full)
@@ -93,6 +95,7 @@ Only keys you set are applied. Omitted harness cells are left alone.
 - MCP edits merge into existing JSON; Codex TOML flips `enabled` and keeps subtables
 - Prefer `$ENV_NAME` in MCP configs — do not commit secrets
 - `import-mcp` / `scrub-catalog` rewrite pasted tokens to `$ENV` refs (args + env + headers)
+- `scrub-harnesses` (dry-run) / `--write` patches harness MCP files in place; backups under `~/.agent-hub/backups/harness-mcp/`; JSONC comments preserved via raw-text replace
 - Always `diff` / `tui --dry-run` before the first real apply
 - `diff` / `apply` hide noop rows by default; pass `-v` / `--verbose` for the full log
 
@@ -103,10 +106,10 @@ Only keys you set are applied. Omitted harness cells are left alone.
 - skill symlink enable/disable (never deletes real dirs)
 - JSON MCP apply (Cursor / Claude / pi / OMP), JSONC-aware
 - Codex TOML MCP apply via `enabled = true|false` (keeps subtables like `.env`)
-- `import-mcp` + `scrub-catalog` for secret hygiene
+- `import-mcp` + `scrub-catalog` + `scrub-harnesses --write` for secret hygiene
 - `profile seed-lab` — clone stable with omp-only experimental skills
 
-Next: cost estimates, prune unused catalog entries, write scrubbed $ENV back into harness MCP files (opt-in).
+Next: cost estimates, prune unused catalog entries.
 
 ## License
 

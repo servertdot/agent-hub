@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  applyReplacementsToText,
   looksLikeSecretValue,
   scrubMcpCatalog,
   scrubMcpServer,
@@ -9,6 +10,11 @@ describe("secrets", () => {
   test("detects common secret shapes", () => {
     expect(looksLikeSecretValue("$FIGMA_API_KEY")).toBe(false);
     expect(looksLikeSecretValue("https://example.com")).toBe(false);
+    expect(
+      looksLikeSecretValue(
+        "/Applications/Pencil.app/Contents/Resources/mcp-server-darwin-arm64",
+      ),
+    ).toBe(false);
     expect(looksLikeSecretValue("figd_abcDEF1234567890_xyz")).toBe(true);
     expect(
       looksLikeSecretValue("ece80e94-6a6b-46fa-b62d-93b55fad2c73"),
@@ -16,9 +22,14 @@ describe("secrets", () => {
   });
 
   test("scrubs env keys and figma CLI args", () => {
-    const { server, hits } = scrubMcpServer("figma", {
+    const { server, hits, replacements } = scrubMcpServer("figma", {
       command: "npx",
-      args: ["-y", "figma-developer-mcp", "--figma-api-key=figd_TESTKEY_1234567890", "--stdio"],
+      args: [
+        "-y",
+        "figma-developer-mcp",
+        "--figma-api-key=figd_TESTKEY_1234567890",
+        "--stdio",
+      ],
       env: {
         KAITEN_TOKEN: "ece80e94-6a6b-46fa-b62d-93b55fad2c73",
         KAITEN_BASE_URL: "https://kaiten.example",
@@ -28,6 +39,24 @@ describe("secrets", () => {
     expect(server.env?.KAITEN_TOKEN).toBe("$KAITEN_TOKEN");
     expect(server.env?.KAITEN_BASE_URL).toBe("https://kaiten.example");
     expect(hits.length).toBe(2);
+    expect(replacements.length).toBe(2);
+  });
+
+  test("applyReplacementsToText preserves surrounding JSONC", () => {
+    const raw = `{\n  // keep\n  "args": ["--figma-api-key=figd_TESTKEY_1234567890"]\n}\n`;
+    const { text, applied } = applyReplacementsToText(raw, [
+      {
+        path: "x",
+        secret: "figd_TESTKEY_1234567890",
+        ref: "$FIGMA_API_KEY",
+        whole: "--figma-api-key=figd_TESTKEY_1234567890",
+        wholeTo: "--figma-api-key=$FIGMA_API_KEY",
+      },
+    ]);
+    expect(applied).toBe(1);
+    expect(text).toContain("// keep");
+    expect(text).toContain("--figma-api-key=$FIGMA_API_KEY");
+    expect(text).not.toContain("figd_TESTKEY");
   });
 
   test("catalog scrub aggregates hits", () => {

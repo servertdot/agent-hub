@@ -23,6 +23,10 @@ import {
   scrubExistingCatalog,
   seedLabProfile,
 } from "./import-catalog.ts";
+import {
+  formatHarnessScrubReports,
+  scrubHarnessMcpFiles,
+} from "./scrub-harnesses.ts";
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -235,6 +239,36 @@ const main = defineCommand({
         }
         console.log(`scrubbed (${hits.length}):`);
         for (const h of hits) console.log(`  ${h.path}: ${h.from} → ${h.to}`);
+      },
+    }),
+
+    "scrub-harnesses": defineCommand({
+      meta: {
+        description:
+          "Scrub pasted secrets in harness MCP files (dry-run by default; --write to apply)",
+      },
+      args: {
+        write: {
+          type: "boolean",
+          description: "Actually write files (backs up under ~/.agent-hub/backups)",
+        },
+        harness: {
+          type: "string",
+          description: "Limit to one harness",
+        },
+      },
+      async run({ args }) {
+        const harness = args.harness
+          ? (String(args.harness) as HarnessId)
+          : undefined;
+        const reports = await scrubHarnessMcpFiles({
+          write: Boolean(args.write),
+          harness,
+        });
+        console.log(formatHarnessScrubReports(reports));
+        if (!args.write && reports.some((r) => r.wouldWrite)) {
+          console.log("\nRe-run with --write to apply (backups are created).");
+        }
       },
     }),
 

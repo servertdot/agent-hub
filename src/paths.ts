@@ -35,6 +35,10 @@ export function hubStatePath(): string {
   return join(hubDir(), "state.json");
 }
 
+export function hubBackupsDir(): string {
+  return join(hubDir(), "backups");
+}
+
 /** Default skill / MCP locations per harness (read side). */
 export function harnessPaths(id: HarnessId): {
   skills: string[];
