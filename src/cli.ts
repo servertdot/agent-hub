@@ -9,13 +9,16 @@ import {
   listProfiles,
   loadConfig,
   loadProfile,
-  saveProfile,
 } from "./config.ts";
 import { discoverMatrix, formatMatrix } from "./discover.ts";
 import { hubDir } from "./paths.ts";
 import { adapters } from "./adapters/index.ts";
-import { HARNESSES, type HarnessId, type Profile } from "./types.ts";
+import { HARNESSES, type HarnessId } from "./types.ts";
 import { App, type TuiResult } from "./tui/App.tsx";
+import {
+  captureProfileFromDiscovery,
+  importMcpCatalog,
+} from "./import-catalog.ts";
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -137,28 +140,42 @@ const main = defineCommand({
         save: defineCommand({
           meta: {
             description:
-              "Save current discovery as a profile (all live cells = true where found)",
+              "Save current discovery as a full boolean matrix profile",
           },
           args: {
             name: { type: "positional", required: true },
           },
           async run({ args }) {
-            const rows = await discoverMatrix();
-            const skills: Profile["skills"] = {};
-            const mcp: Profile["mcp"] = {};
-            for (const r of rows) {
-              const bucket = r.kind === "skill" ? skills : mcp;
-              bucket[r.name] = { ...r.flags } as Profile["skills"][string];
-            }
-            const path = await saveProfile({
-              name: String(args.name),
-              description: "Captured from discover",
-              skills,
-              mcp,
-            });
+            const path = await captureProfileFromDiscovery(String(args.name));
             console.log(`saved ${path}`);
           },
         }),
+      },
+    }),
+
+    "import-mcp": defineCommand({
+      meta: {
+        description:
+          "Import MCP server defs from JSON harness configs into ~/.agent-hub/catalog/mcp.yaml",
+      },
+      args: {
+        overwrite: {
+          type: "boolean",
+          description: "Replace existing catalog entries",
+        },
+      },
+      async run({ args }) {
+        const { added, skipped, path } = await importMcpCatalog({
+          overwrite: Boolean(args.overwrite),
+        });
+        console.log(`catalog: ${path}`);
+        console.log(`added (${added.length}):`);
+        for (const a of added) console.log(`  ${a}`);
+        if (skipped.length) {
+          console.log(`skipped (${skipped.length}):`);
+          for (const s of skipped.slice(0, 20)) console.log(`  ${s}`);
+          if (skipped.length > 20) console.log(`  … ${skipped.length - 20} more`);
+        }
       },
     }),
 

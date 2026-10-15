@@ -112,6 +112,22 @@ export async function setJsonMcp(opts: {
         detail: "not in file and no catalog entry",
       };
     }
+    if (exists) {
+      const entry = data.mcpServers[name] as Record<string, unknown>;
+      const listedDisabled =
+        hasDisabledList && (data.disabledServers ?? []).includes(name);
+      const flaggedOff = entry.enabled === false;
+      if (!listedDisabled && !flaggedOff) {
+        return {
+          harness,
+          kind: "mcp",
+          name,
+          action: "noop",
+          status: "ok",
+          detail: "already enabled",
+        };
+      }
+    }
     if (dryRun) {
       return {
         harness,
@@ -129,10 +145,13 @@ export async function setJsonMcp(opts: {
       if ("enabled" in entry) entry.enabled = true;
     }
     if (hasDisabledList) {
-      data.disabledServers = (data.disabledServers ?? []).filter((n) => n !== name);
+      data.disabledServers = (data.disabledServers ?? []).filter(
+        (n) => n !== name,
+      );
     }
   } else {
-    if (!exists && !hasDisabledList) {
+    // Not installed here — do not pollute disabledServers with foreign names
+    if (!exists) {
       return {
         harness,
         kind: "mcp",
@@ -140,6 +159,20 @@ export async function setJsonMcp(opts: {
         action: "noop",
         status: "ok",
         detail: "already absent",
+      };
+    }
+    const entry = data.mcpServers[name] as Record<string, unknown>;
+    const alreadyOff =
+      entry.enabled === false ||
+      (hasDisabledList && (data.disabledServers ?? []).includes(name));
+    if (alreadyOff) {
+      return {
+        harness,
+        kind: "mcp",
+        name,
+        action: "noop",
+        status: "ok",
+        detail: "already disabled",
       };
     }
     if (dryRun) {
@@ -156,8 +189,7 @@ export async function setJsonMcp(opts: {
       const set = new Set(data.disabledServers ?? []);
       set.add(name);
       data.disabledServers = [...set].sort();
-    } else if (exists) {
-      const entry = data.mcpServers[name] as Record<string, unknown>;
+    } else {
       entry.enabled = false;
     }
   }

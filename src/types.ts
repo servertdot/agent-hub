@@ -47,6 +47,7 @@ export const McpServerSchema = z.object({
   args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   url: z.string().optional(),
+  cwd: z.string().optional(),
   type: z.enum(["stdio", "http", "sse"]).optional(),
   headers: z.record(z.string(), z.string()).optional(),
 });

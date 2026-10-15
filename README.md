@@ -32,6 +32,7 @@ Requires Node 22+ or Bun.
 agent-hub init                 # ~/.agent-hub + example profiles
 agent-hub status
 agent-hub discover             # matrix of what is on this machine
+agent-hub import-mcp           # fill catalog/mcp.yaml from Cursor/Claude/OMP JSON
 agent-hub profile save stable  # capture current discovery into a profile
 agent-hub diff stable          # dry-run
 agent-hub apply stable
@@ -92,9 +93,13 @@ Only keys you set are applied. Omitted harness cells are left alone.
 
 ## Status (0.1)
 
-MVP: discover, profiles, JSON MCP apply (Cursor/Claude/pi/OMP), skill symlink enable/disable, Ink TUI.
+- discover / profiles / Ink TUI (stage → apply)
+- skill symlink enable/disable (never deletes real dirs)
+- JSON MCP apply (Cursor / Claude / pi / OMP), JSONC-aware
+- Codex TOML MCP apply via `enabled = true|false` (keeps subtables like `.env`)
+- `import-mcp` → `~/.agent-hub/catalog/mcp.yaml`
 
-Next: Codex TOML MCP writer, import-from-harnesses into catalog, cost estimates, numbered non-TTY fallback.
+Next: cost estimates, numbered non-TTY fallback, prune unused catalog entries.
 
 ## License
 

@@ -1,10 +1,13 @@
 import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import type { HarnessAdapter } from "./types.ts";
 import type { HarnessId, McpRef, OpResult, SkillRef } from "../types.ts";
 import { home, harnessPaths } from "../paths.ts";
 import { listSkillDirs, setSkillLink } from "./fs-skills.ts";
 import { listJsonMcp, setJsonMcp } from "./json-mcp.ts";
-import { existsSync } from "node:fs";
+import { listTomlMcp, setTomlMcp } from "./toml-mcp.ts";
+import { loadMcpCatalog } from "../config.ts";
 
 /** Primary skill install dir per harness (where we symlink on enable). */
 function skillTargetDir(id: HarnessId): string {
@@ -27,16 +30,21 @@ function mcpPrimaryFile(id: HarnessId): string | undefined {
   return harnessPaths(id).mcpFiles[0];
 }
 
-function makeJsonAdapter(id: HarnessId): HarnessAdapter {
+function dirnameSafe(p: string): string {
+  const i = p.lastIndexOf("/");
+  return i <= 0 ? p : p.slice(0, i);
+}
+
+function makeAdapter(id: HarnessId): HarnessAdapter {
   const paths = harnessPaths(id);
   return {
     id,
     async isInstalled() {
-      // Installed if home-ish path exists or shared agents skills exist
       return (
         existsSync(skillTargetDir(id)) ||
         existsSync(join(home(), ".agents", "skills")) ||
-        (mcpPrimaryFile(id) !== undefined && existsSync(dirnameSafe(mcpPrimaryFile(id)!)))
+        (mcpPrimaryFile(id) !== undefined &&
+          existsSync(dirnameSafe(mcpPrimaryFile(id)!)))
       );
     },
     async listSkills() {
@@ -46,8 +54,8 @@ function makeJsonAdapter(id: HarnessId): HarnessAdapter {
       const file = mcpPrimaryFile(id);
       if (!file || !existsSync(file)) return [];
       if (file.endsWith(".toml")) {
-        // Codex TOML — discovery stub for MVP (apply still skipped with detail)
-        return listCodexMcpNames(file, id);
+        const text = await readFile(file, "utf8");
+        return listTomlMcp(text, id);
       }
       return listJsonMcp(file, id);
     },
@@ -78,51 +86,36 @@ function makeJsonAdapter(id: HarnessId): HarnessAdapter {
           detail: "no mcp file mapped",
         };
       }
+      const catalog = await loadMcpCatalog();
+      const catalogEntry = catalog.mcpServers[name];
       if (file.endsWith(".toml")) {
-        return {
+        return setTomlMcp({
           harness: id,
-          kind: "mcp",
+          path: file,
           name,
-          action: enabled ? "enable" : "disable",
-          status: "skipped",
-          detail: "codex TOML mcp apply not implemented in MVP",
-        };
+          enabled,
+          dryRun,
+          catalogEntry,
+        });
       }
-      return setJsonMcp({ harness: id, path: file, name, enabled, dryRun });
+      return setJsonMcp({
+        harness: id,
+        path: file,
+        name,
+        enabled,
+        dryRun,
+        catalogEntry,
+      });
     },
   };
 }
 
-function dirnameSafe(p: string): string {
-  const i = p.lastIndexOf("/");
-  return i <= 0 ? p : p.slice(0, i);
-}
-
-async function listCodexMcpNames(
-  path: string,
-  source: string,
-): Promise<McpRef[]> {
-  const { readFile } = await import("node:fs/promises");
-  if (!existsSync(path)) return [];
-  const text = await readFile(path, "utf8");
-  const names = new Set<string>();
-  for (const line of text.split("\n")) {
-    const m = line.match(/^\[mcp_servers\.([^\].]+)\]/);
-    if (m) names.add(m[1]!);
-  }
-  return [...names].sort().map((name) => ({
-    name,
-    enabled: true,
-    source,
-  }));
-}
-
 export const adapters: Record<HarnessId, HarnessAdapter> = {
-  cursor: makeJsonAdapter("cursor"),
-  claude: makeJsonAdapter("claude"),
-  codex: makeJsonAdapter("codex"),
-  pi: makeJsonAdapter("pi"),
-  omp: makeJsonAdapter("omp"),
+  cursor: makeAdapter("cursor"),
+  claude: makeAdapter("claude"),
+  codex: makeAdapter("codex"),
+  pi: makeAdapter("pi"),
+  omp: makeAdapter("omp"),
 };
 
 export function enabledAdapters(
@@ -132,3 +125,5 @@ export function enabledAdapters(
     .filter((id) => flags[id] !== false)
     .map((id) => adapters[id]);
 }
+
+export type { SkillRef, McpRef, OpResult };
