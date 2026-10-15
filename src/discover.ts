@@ -21,9 +21,13 @@ import { HARNESSES, type HarnessId, type MatrixRow } from "./types.ts";
 
 /**
  * Build matrix for a profile workspace:
- * - skill names = workspace ∪ profile YAML keys (via library) ∪ live harness dirs
- * - flags[h] = present in harness owned dir
- * - mcp = profile workspace catalog ∪ harness MCP files
+ * - skill names = that profile's workspace ∪ profile YAML keys (via library)
+ * - flags[h] = present in harness owned dir (live projection)
+ * - mcp names = profile workspace catalog ∪ profile YAML mcp keys
+ * - mcp flags = enabled state from harness MCP files (for names in universe only)
+ *
+ * Live harness installs that are not in the profile are ignored (sync/apply
+ * absorbs them into the active profile separately).
  */
 export async function discoverMatrix(opts?: {
   withCosts?: boolean;
@@ -38,17 +42,17 @@ export async function discoverMatrix(opts?: {
 
   const allSkillRoots = [
     ...(profileName ? [hubWorkspaceSkillsDir(profileName)] : []),
-    ...HARNESSES.map((id) => harnessSkillDir(id)),
     ...(cfg.catalog.skillRoots ?? []),
   ];
   const universe = await listSkillDirs(allSkillRoots, "universe");
 
   // Profile YAML may reference skills still only in library (e.g. after a bad save).
+  let profileDoc: Awaited<ReturnType<typeof loadProfile>> | undefined;
   if (profileName) {
     try {
-      const profile = await loadProfile(profileName);
+      profileDoc = await loadProfile(profileName);
       const seen = new Set(universe.map((s) => s.name));
-      for (const name of Object.keys(profile.skills)) {
+      for (const name of Object.keys(profileDoc.skills)) {
         if (seen.has(name)) continue;
         const lib = join(hubLibrarySkillsDir(), name);
         const ws = join(hubWorkspaceSkillsDir(profileName), name);
@@ -94,15 +98,23 @@ export async function discoverMatrix(opts?: {
       mcpMap.set(name, flags);
       mcpBasis.set(name, hubWorkspaceMcpPath(profileName));
     }
+    for (const name of Object.keys(profileDoc?.mcp ?? {})) {
+      if (mcpMap.has(name)) continue;
+      const flags: Partial<Record<HarnessId, boolean>> = {};
+      for (const ad of ads) flags[ad.id] = false;
+      mcpMap.set(name, flags);
+      mcpBasis.set(name, `profile:${profileName}`);
+    }
   }
 
+  // Fill flags only for MCP names already in this profile's universe.
   for (const ad of ads) {
     const mcps = await ad.listMcp();
     for (const m of mcps) {
-      const flags = mcpMap.get(m.name) ?? {};
+      if (!mcpMap.has(m.name)) continue;
+      const flags = mcpMap.get(m.name)!;
       flags[ad.id] = m.enabled;
       mcpMap.set(m.name, flags);
-      if (!mcpBasis.has(m.name)) mcpBasis.set(m.name, m.source);
     }
   }
 

@@ -309,7 +309,7 @@ export function loadProfileIntoState(
   };
 }
 
-/** Start a new empty-named profile from live discovery (no YAML baseline). */
+/** Start a brand-new empty profile (no skills/MCP, no inherited discover rows). */
 export function newProfileIntoState(
   state: ViewState,
   name: string,
@@ -317,7 +317,13 @@ export function newProfileIntoState(
   return {
     ...state,
     profileName: name,
-    profile: undefined,
+    profile: {
+      name,
+      description: `Empty profile created ${new Date().toISOString()}`,
+      skills: {},
+      mcp: {},
+    },
+    rows: [],
     staged: new Map(),
     cursor: 0,
   };

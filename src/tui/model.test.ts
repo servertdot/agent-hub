@@ -9,6 +9,7 @@ import {
   effectiveFlag,
   harnessColumns,
   loadProfileIntoState,
+  newProfileIntoState,
   setKindFlags,
   toggleCell,
   toggleHarness,
@@ -98,6 +99,17 @@ describe("tui model", () => {
       pi: false,
       omp: true,
     });
+  });
+
+  test("new profile starts empty (no inherited rows)", () => {
+    const s = newProfileIntoState(base(), "clean");
+    expect(s.profileName).toBe("clean");
+    expect(s.rows).toEqual([]);
+    expect(s.profile?.skills).toEqual({});
+    expect(s.profile?.mcp).toEqual({});
+    const built = buildFullProfile(s);
+    expect(built.skills).toEqual({});
+    expect(built.mcp).toEqual({});
   });
 
   test("loadProfileIntoState resets staged", () => {

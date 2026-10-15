@@ -453,16 +453,32 @@ export function App({
       if (key.return) {
         const name = newName.trim();
         if (!name) return;
-        setState((s) => newProfileIntoState(s, name));
-        setNames((prev) => {
-          const next = prev.includes(name) ? prev : [...prev, name].sort();
-          setSideCursor(next.indexOf(name));
-          return next;
-        });
-        setFlash(`new profile ${name} (from live)`);
-        setNewName("");
-        setMode("main");
-        setFocus("main");
+        void (async () => {
+          setBusy(true);
+          try {
+            const blank = newProfileIntoState(state, name).profile!;
+            await saveProfile(blank);
+            const { mkdir } = await import("node:fs/promises");
+            const { hubWorkspaceSkillsDir } = await import("../paths.ts");
+            await mkdir(hubWorkspaceSkillsDir(name), { recursive: true });
+            setState((s) => newProfileIntoState(s, name));
+            setNames((prev) => {
+              const next = prev.includes(name) ? prev : [...prev, name].sort();
+              setSideCursor(next.indexOf(name));
+              return next;
+            });
+            setFlash(`new profile ${name} (empty)`);
+            setNewName("");
+            setMode("main");
+            setFocus("main");
+          } catch (err) {
+            setFlash(
+              `new profile failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          } finally {
+            setBusy(false);
+          }
+        })();
         return;
       }
       if (key.backspace || key.delete) {

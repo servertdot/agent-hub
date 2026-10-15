@@ -182,8 +182,12 @@ export async function runNumberedMenu(opts: {
             continue;
           }
           state = newProfileIntoState(state, name);
+          if (state.profile) await saveProfile(state.profile);
+          const { mkdir } = await import("node:fs/promises");
+          const { hubWorkspaceSkillsDir } = await import("../paths.ts");
+          await mkdir(hubWorkspaceSkillsDir(name), { recursive: true });
           if (!names.includes(name)) names = [...names, name].sort();
-          output.write(`new profile ${name} (baseline = live)\n`);
+          output.write(`new profile ${name} (empty)\n`);
           continue;
         }
         try {
