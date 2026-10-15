@@ -1,0 +1,209 @@
+#!/usr/bin/env bun
+import { defineCommand, runMain } from "citty";
+import { render } from "ink";
+import React from "react";
+import { applyProfile, formatResults } from "./apply.ts";
+import {
+  ensureHubLayout,
+  getActiveProfile,
+  listProfiles,
+  loadConfig,
+  loadProfile,
+  saveProfile,
+} from "./config.ts";
+import { discoverMatrix, formatMatrix } from "./discover.ts";
+import { hubDir } from "./paths.ts";
+import { adapters } from "./adapters/index.ts";
+import { HARNESSES, type HarnessId, type Profile } from "./types.ts";
+import { App, type TuiResult } from "./tui/App.tsx";
+import { copyFile, mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+
+const main = defineCommand({
+  meta: {
+    name: "agent-hub",
+    version: "0.1.0",
+    description:
+      "Manage skills & MCP across Cursor, Claude Code, Codex, pi, and OMP",
+  },
+  subCommands: {
+    init: defineCommand({
+      meta: { description: "Create ~/.agent-hub layout and example profiles" },
+      async run() {
+        await ensureHubLayout();
+        // src/cli.ts → ../profiles; dist/cli.js → ../profiles
+        const root = fileURLToPath(new URL("..", import.meta.url));
+        const examples = join(root, "profiles");
+        for (const name of ["stable", "lab"]) {
+          const src = join(examples, `${name}.yaml`);
+          const dest = join(hubDir(), "profiles", `${name}.yaml`);
+          if (existsSync(src) && !existsSync(dest)) {
+            await mkdir(dirname(dest), { recursive: true });
+            await copyFile(src, dest);
+            console.log(`wrote ${dest}`);
+          } else if (!existsSync(src)) {
+            console.warn(`skip example ${name}: missing ${src}`);
+          }
+        }
+        console.log(`hub dir: ${hubDir()}`);
+        console.log("done. Next: agent-hub status");
+      },
+    }),
+
+    status: defineCommand({
+      meta: { description: "Show hub dir, harnesses, active profile" },
+      async run() {
+        await ensureHubLayout();
+        const cfg = await loadConfig();
+        const active = await getActiveProfile();
+        const profiles = await listProfiles();
+        console.log(`hub: ${hubDir()}`);
+        console.log(`active profile: ${active ?? "(none)"}`);
+        console.log(`profiles: ${profiles.join(", ") || "(none)"}`);
+        console.log("harnesses:");
+        for (const id of HARNESSES) {
+          const on = cfg.harnesses[id] !== false;
+          const ad = adapters[id];
+          const installed = await ad.isInstalled();
+          console.log(
+            `  ${id.padEnd(8)} config=${on ? "on" : "off"}  installed=${installed ? "yes" : "no"}`,
+          );
+        }
+      },
+    }),
+
+    discover: defineCommand({
+      meta: { description: "Print skill/MCP matrix discovered on this machine" },
+      async run() {
+        const rows = await discoverMatrix();
+        console.log(formatMatrix(rows));
+        console.log(`\n${rows.length} resources`);
+      },
+    }),
+
+    diff: defineCommand({
+      meta: { description: "Dry-run apply a profile" },
+      args: {
+        profile: { type: "positional", required: true, description: "Profile name" },
+        harness: { type: "string", description: "Limit to one harness" },
+      },
+      async run({ args }) {
+        const profile = await loadProfile(String(args.profile));
+        const harness = args.harness
+          ? (String(args.harness) as HarnessId)
+          : undefined;
+        const results = await applyProfile({
+          profile,
+          dryRun: true,
+          harness,
+        });
+        console.log(formatResults(results));
+      },
+    }),
+
+    apply: defineCommand({
+      meta: { description: "Apply a profile to enabled harnesses" },
+      args: {
+        profile: { type: "positional", required: true, description: "Profile name" },
+        harness: { type: "string", description: "Limit to one harness" },
+        "dry-run": { type: "boolean", description: "Plan only" },
+      },
+      async run({ args }) {
+        const profile = await loadProfile(String(args.profile));
+        const harness = args.harness
+          ? (String(args.harness) as HarnessId)
+          : undefined;
+        const results = await applyProfile({
+          profile,
+          dryRun: Boolean(args["dry-run"]),
+          harness,
+        });
+        console.log(formatResults(results));
+      },
+    }),
+
+    profile: defineCommand({
+      meta: { description: "List or save profiles" },
+      subCommands: {
+        list: defineCommand({
+          meta: { description: "List profiles" },
+          async run() {
+            const names = await listProfiles();
+            console.log(names.join("\n") || "(none)");
+          },
+        }),
+        save: defineCommand({
+          meta: {
+            description:
+              "Save current discovery as a profile (all live cells = true where found)",
+          },
+          args: {
+            name: { type: "positional", required: true },
+          },
+          async run({ args }) {
+            const rows = await discoverMatrix();
+            const skills: Profile["skills"] = {};
+            const mcp: Profile["mcp"] = {};
+            for (const r of rows) {
+              const bucket = r.kind === "skill" ? skills : mcp;
+              bucket[r.name] = { ...r.flags } as Profile["skills"][string];
+            }
+            const path = await saveProfile({
+              name: String(args.name),
+              description: "Captured from discover",
+              skills,
+              mcp,
+            });
+            console.log(`saved ${path}`);
+          },
+        }),
+      },
+    }),
+
+    tui: defineCommand({
+      meta: { description: "Interactive matrix (agent-toggle style)" },
+      args: {
+        "dry-run": { type: "boolean", description: "Stage apply as dry-run" },
+        profile: {
+          type: "string",
+          description: "Name written when applying staged cells",
+          default: "tui-session",
+        },
+      },
+      async run({ args }) {
+        if (!process.stdin.isTTY) {
+          console.error("tui requires a TTY; use discover / apply instead");
+          process.exitCode = 2;
+          return;
+        }
+        const rows = await discoverMatrix();
+        const hold: { current: TuiResult } = { current: { action: "cancel" } };
+        const { waitUntilExit } = render(
+          React.createElement(App, {
+            rows,
+            profileName: String(args.profile),
+            dryRun: Boolean(args["dry-run"]),
+            onDone: (r: TuiResult) => {
+              hold.current = r;
+            },
+          }),
+        );
+        await waitUntilExit();
+        const result = hold.current;
+        if (result.action === "cancel") {
+          console.log("cancelled");
+          return;
+        }
+        const results = await applyProfile({
+          profile: result.profile,
+          dryRun: result.dryRun,
+        });
+        console.log(formatResults(results));
+      },
+    }),
+  },
+});
+
+runMain(main);

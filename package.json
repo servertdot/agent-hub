@@ -1,0 +1,46 @@
+{
+  "name": "agent-hub",
+  "version": "0.1.0",
+  "description": "CLI + TUI to manage skills and MCP servers across Cursor, Claude Code, Codex, pi, and OMP from one place.",
+  "type": "module",
+  "bin": {
+    "agent-hub": "./dist/cli.js",
+    "ahub": "./dist/cli.js"
+  },
+  "scripts": {
+    "dev": "bun run src/cli.ts",
+    "build": "bun build src/cli.ts --outdir dist --target node --format esm",
+    "start": "bun run dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "ai-agents",
+    "skills",
+    "mcp",
+    "cli",
+    "tui",
+    "cursor",
+    "claude-code",
+    "codex",
+    "pi",
+    "omp"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "citty": "^0.1.6",
+    "ink": "^6.3.0",
+    "react": "^19.1.0",
+    "yaml": "^2.8.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.1.8",
+    "typescript": "^5.9.3"
+  }
+}
