@@ -1,9 +1,12 @@
 import { adapters, enabledAdapters } from "./adapters/index.ts";
-import { loadConfig, setActiveProfile } from "./config.ts";
+import { loadConfig, loadProfile, setActiveProfile } from "./config.ts";
+import { syncSharedToActiveProfile } from "./sync-shared.ts";
 import {
-  syncSharedToActiveProfile,
-} from "./sync-shared.ts";
-import { HARNESSES, type HarnessId, type OpResult, type Profile } from "./types.ts";
+  HARNESSES,
+  type HarnessId,
+  type OpResult,
+  type Profile,
+} from "./types.ts";
 import {
   formatWorkspaceOps,
   migrateSkillsToLibrary,
@@ -20,6 +23,81 @@ export type ApplyOptions = {
   skipWorkspacePrep?: boolean;
 };
 
+/** Skills/MCP that should be live on each harness after apply. */
+function desiredEnabled(
+  profile: Profile,
+  kind: "skills" | "mcp",
+): Map<HarnessId, Set<string>> {
+  const out = new Map<HarnessId, Set<string>>();
+  for (const id of HARNESSES) out.set(id, new Set());
+  const bucket = kind === "skills" ? profile.skills : profile.mcp;
+  for (const [name, flags] of Object.entries(bucket)) {
+    for (const id of HARNESSES) {
+      if (flags[id] === true) out.get(id)!.add(name);
+    }
+  }
+  return out;
+}
+
+async function projectProfile(
+  profile: Profile,
+  ads: ReturnType<typeof enabledAdapters>,
+  dryRun: boolean,
+): Promise<OpResult[]> {
+  const results: OpResult[] = [];
+
+  for (const [name, flags] of Object.entries(profile.skills)) {
+    for (const id of HARNESSES) {
+      if (flags[id] === undefined) continue;
+      const ad = adapters[id];
+      if (!ads.includes(ad)) continue;
+      results.push(await ad.setSkill(name, flags[id]!, dryRun));
+    }
+  }
+
+  for (const [name, flags] of Object.entries(profile.mcp)) {
+    for (const id of HARNESSES) {
+      if (flags[id] === undefined) continue;
+      const ad = adapters[id];
+      if (!ads.includes(ad)) continue;
+      results.push(await ad.setMcp(name, flags[id]!, dryRun));
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Remove harness projections that are not enabled in the profile.
+ * Empty profile → clear all hub-managed skill links (and disable extra MCP).
+ */
+async function pruneHarnessExtras(
+  profile: Profile,
+  ads: ReturnType<typeof enabledAdapters>,
+  dryRun: boolean,
+): Promise<OpResult[]> {
+  const results: OpResult[] = [];
+  const wantSkills = desiredEnabled(profile, "skills");
+  const wantMcp = desiredEnabled(profile, "mcp");
+
+  for (const ad of ads) {
+    const liveSkills = await ad.listSkills();
+    for (const s of liveSkills) {
+      if (wantSkills.get(ad.id)?.has(s.name)) continue;
+      results.push(await ad.setSkill(s.name, false, dryRun));
+    }
+
+    const liveMcp = await ad.listMcp();
+    for (const m of liveMcp) {
+      if (!m.enabled) continue;
+      if (wantMcp.get(ad.id)?.has(m.name)) continue;
+      results.push(await ad.setMcp(m.name, false, dryRun));
+    }
+  }
+
+  return results;
+}
+
 export async function applyProfile(opts: ApplyOptions): Promise<OpResult[]> {
   const { profile, dryRun = false, harness, skipWorkspacePrep = false } = opts;
   const cfg = await loadConfig();
@@ -30,6 +108,8 @@ export async function applyProfile(opts: ApplyOptions): Promise<OpResult[]> {
 
   // Active early so shared sync + skill sources target this profile.
   if (!dryRun) await setActiveProfile(profile.name);
+
+  let effective = profile;
 
   if (!skipWorkspacePrep) {
     // ~/.agents + harness skill dirs (real installs) → active profile workspace
@@ -57,54 +137,15 @@ export async function applyProfile(opts: ApplyOptions): Promise<OpResult[]> {
     });
     results.push(...workspaceOpsAsResults(migrated));
 
-    // Reload profile if sync added skills to YAML
-    let effective = profile;
     if (!dryRun && synced.added.length) {
-      const { loadProfile } = await import("./config.ts");
       effective = await loadProfile(profile.name);
     }
     const wsOps = await syncWorkspace(effective, dryRun);
     results.push(...workspaceOpsAsResults(wsOps));
-
-    // Project matrix — use effective so newly synced skills get harness links
-    for (const [name, flags] of Object.entries(effective.skills)) {
-      for (const id of HARNESSES) {
-        if (flags[id] === undefined) continue;
-        const ad = adapters[id];
-        if (!ads.includes(ad)) continue;
-        results.push(await ad.setSkill(name, flags[id]!, dryRun));
-      }
-    }
-
-    for (const [name, flags] of Object.entries(effective.mcp)) {
-      for (const id of HARNESSES) {
-        if (flags[id] === undefined) continue;
-        const ad = adapters[id];
-        if (!ads.includes(ad)) continue;
-        results.push(await ad.setMcp(name, flags[id]!, dryRun));
-      }
-    }
-
-    return results;
   }
 
-  for (const [name, flags] of Object.entries(profile.skills)) {
-    for (const id of HARNESSES) {
-      if (flags[id] === undefined) continue;
-      const ad = adapters[id];
-      if (!ads.includes(ad)) continue;
-      results.push(await ad.setSkill(name, flags[id]!, dryRun));
-    }
-  }
-
-  for (const [name, flags] of Object.entries(profile.mcp)) {
-    for (const id of HARNESSES) {
-      if (flags[id] === undefined) continue;
-      const ad = adapters[id];
-      if (!ads.includes(ad)) continue;
-      results.push(await ad.setMcp(name, flags[id]!, dryRun));
-    }
-  }
+  results.push(...(await projectProfile(effective, ads, dryRun)));
+  results.push(...(await pruneHarnessExtras(effective, ads, dryRun)));
 
   return results;
 }

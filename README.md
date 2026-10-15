@@ -25,7 +25,7 @@ A **profile** is an active **workspace**. Switching profile changes which skills
 
 - **Workspace** — profile-private skills (`workspaces/<profile>/skills/`) and MCP (`workspaces/<profile>/mcp.yaml`).
 - **Library** — migrate leftovers / orphans only (not where new installs go).
-- **Apply** — parks shared `~/.agents/skills` (empty), syncs workspace, projects into harness dirs.
+- **Apply** — parks shared `~/.agents/skills` (empty), syncs workspace, projects into harness dirs, then **prunes** harness skills/MCP that are not enabled in the profile (empty profile → clear hub-managed projections).
 - **Install / remove** — only the active profile. Same name in another profile or library → **conflict**.
 - **Adopt** — claim an orphan library skill / global MCP into the active profile.
 - **Sync / watch** — external installs in `~/.agents/skills` **and** harness dirs (`~/.cursor/skills`, `~/.codex/skills`, `~/.pi/agent/skills`, …) move into the **active** profile. Hub symlinks are ignored. Switching profile keeps those skills only on the previous profile.
