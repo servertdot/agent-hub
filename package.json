@@ -4,8 +4,8 @@
   "description": "CLI + TUI to manage skills and MCP servers across Cursor, Claude Code, Codex, pi, and OMP from one place.",
   "type": "module",
   "bin": {
-    "agent-hub": "./dist/cli.js",
-    "ahub": "./dist/cli.js"
+    "agent-hub": "./bin/agent-hub",
+    "ahub": "./bin/agent-hub"
   },
   "scripts": {
     "dev": "bun run src/cli.ts",

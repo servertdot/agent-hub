@@ -1,9 +1,12 @@
-import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { HarnessAdapter } from "./types.ts";
 import type { HarnessId, McpRef, OpResult, SkillRef } from "../types.ts";
-import { home, harnessPaths } from "../paths.ts";
+import {
+  harnessPaths,
+  harnessSkillDir,
+  hubLibrarySkillsDir,
+} from "../paths.ts";
 import { listSkillDirs, setSkillLink } from "./fs-skills.ts";
 import { listJsonMcp, setJsonMcp } from "./json-mcp.ts";
 import { listTomlMcp, setTomlMcp } from "./toml-mcp.ts";
@@ -11,19 +14,7 @@ import { loadMcpCatalog } from "../config.ts";
 
 /** Primary skill install dir per harness (where we symlink on enable). */
 function skillTargetDir(id: HarnessId): string {
-  const h = home();
-  switch (id) {
-    case "cursor":
-      return join(h, ".cursor", "skills");
-    case "claude":
-      return join(h, ".claude", "skills");
-    case "codex":
-      return join(h, ".codex", "skills");
-    case "pi":
-      return join(h, ".pi", "agent", "skills");
-    case "omp":
-      return join(h, ".omp", "agent", "skills");
-  }
+  return harnessSkillDir(id);
 }
 
 function mcpPrimaryFile(id: HarnessId): string | undefined {
@@ -42,13 +33,13 @@ function makeAdapter(id: HarnessId): HarnessAdapter {
     async isInstalled() {
       return (
         existsSync(skillTargetDir(id)) ||
-        existsSync(join(home(), ".agents", "skills")) ||
+        existsSync(hubLibrarySkillsDir()) ||
         (mcpPrimaryFile(id) !== undefined &&
           existsSync(dirnameSafe(mcpPrimaryFile(id)!)))
       );
     },
     async listSkills() {
-      return listSkillDirs(paths.skills, id);
+      return listSkillDirs([skillTargetDir(id)], id);
     },
     async listMcp() {
       const file = mcpPrimaryFile(id);
@@ -61,7 +52,7 @@ function makeAdapter(id: HarnessId): HarnessAdapter {
     },
     async setSkill(name, enabled, dryRun) {
       const discovered = await listSkillDirs(
-        [join(home(), ".agents", "skills"), ...paths.skills],
+        [hubLibrarySkillsDir(), skillTargetDir(id)],
         "catalog",
       );
       const src = discovered.find((s) => s.name === name)?.path;

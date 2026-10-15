@@ -9,6 +9,7 @@ import {
   listProfiles,
   loadConfig,
   loadProfile,
+  saveProfile,
 } from "./config.ts";
 import {
   discoverMatrix,
@@ -16,9 +17,21 @@ import {
   formatMatrixFooter,
 } from "./discover.ts";
 import { sortByCost } from "./cost.ts";
-import { hubDir } from "./paths.ts";
+import {
+  hubDir,
+  hubLibrarySkillsDir,
+  hubWorkspaceSkillsDir,
+} from "./paths.ts";
 import { adapters } from "./adapters/index.ts";
 import { HARNESSES, type HarnessId } from "./types.ts";
+import {
+  formatWorkspaceOps,
+  installSkillToWorkspace,
+  listLibrarySkills,
+  listWorkspaceSkills,
+  migrateSkillsToLibrary,
+  ensureSharedParked,
+} from "./workspace.ts";
 import { App } from "./tui/App.tsx";
 import { runNumberedMenu } from "./tui/menu.ts";
 import type { TuiResult } from "./tui/types.ts";
@@ -69,15 +82,25 @@ const main = defineCommand({
     }),
 
     status: defineCommand({
-      meta: { description: "Show hub dir, harnesses, active profile" },
+      meta: { description: "Show hub dir, harnesses, active profile, workspace" },
       async run() {
         await ensureHubLayout();
         const cfg = await loadConfig();
         const active = await getActiveProfile();
         const profiles = await listProfiles();
+        const libCount = (await listLibrarySkills()).length;
+        const wsCount = active
+          ? (await listWorkspaceSkills(active)).length
+          : 0;
         console.log(`hub: ${hubDir()}`);
         console.log(`active profile: ${active ?? "(none)"}`);
         console.log(`profiles: ${profiles.join(", ") || "(none)"}`);
+        console.log(`library: ${hubLibrarySkillsDir()} (${libCount} skills)`);
+        if (active) {
+          console.log(
+            `workspace: ${hubWorkspaceSkillsDir(active)} (${wsCount} skills)`,
+          );
+        }
         console.log("harnesses:");
         for (const id of HARNESSES) {
           const on = cfg.harnesses[id] !== false;
@@ -87,6 +110,128 @@ const main = defineCommand({
             `  ${id.padEnd(8)} config=${on ? "on" : "off"}  installed=${installed ? "yes" : "no"}`,
           );
         }
+      },
+    }),
+
+    migrate: defineCommand({
+      meta: {
+        description:
+          "Absorb ~/.agents/skills + real harness skill dirs into library; park shared pool empty",
+      },
+      args: {
+        "dry-run": { type: "boolean", description: "Plan only" },
+      },
+      async run({ args }) {
+        await ensureHubLayout();
+        const dryRun = Boolean(args["dry-run"]);
+        const ops = await migrateSkillsToLibrary({ dryRun });
+        const parked = await ensureSharedParked(dryRun);
+        console.log(formatWorkspaceOps([...ops, parked]));
+      },
+    }),
+
+    skill: defineCommand({
+      meta: { description: "Install / list skills in library & active workspace" },
+      subCommands: {
+        install: defineCommand({
+          meta: {
+            description:
+              "Copy a skill dir into library + active workspace; enable on hub harnesses; optional apply",
+          },
+          args: {
+            path: {
+              type: "positional",
+              required: true,
+              description: "Path to skill directory (contains SKILL.md)",
+            },
+            profile: {
+              type: "string",
+              description: "Target profile (default: active)",
+            },
+            apply: {
+              type: "boolean",
+              description: "Apply profile after install",
+            },
+            "dry-run": { type: "boolean", description: "Plan only" },
+          },
+          async run({ args }) {
+            await ensureHubLayout();
+            const cfg = await loadConfig();
+            const active = await getActiveProfile();
+            const profileName =
+              (args.profile ? String(args.profile) : undefined) ?? active;
+            if (!profileName) {
+              throw new Error(
+                "no active profile — pass --profile or run agent-hub apply <name> first",
+              );
+            }
+            const dryRun = Boolean(args["dry-run"]);
+            const { ops, name } = await installSkillToWorkspace({
+              sourcePath: String(args.path),
+              profileName,
+              dryRun,
+            });
+            console.log(formatWorkspaceOps(ops));
+
+            let profile = await loadProfile(profileName).catch(async () => {
+              const blank = {
+                name: profileName,
+                description: `workspace ${profileName}`,
+                skills: {},
+                mcp: {},
+              };
+              if (!dryRun) await saveProfile(blank);
+              return blank;
+            });
+
+            const flags: Record<HarnessId, boolean> = {
+              cursor: false,
+              claude: false,
+              codex: false,
+              pi: false,
+              omp: false,
+            };
+            for (const id of HARNESSES) {
+              flags[id] = cfg.harnesses[id] !== false;
+            }
+            profile = {
+              ...profile,
+              skills: { ...profile.skills, [name]: flags },
+            };
+            if (!dryRun) {
+              await saveProfile(profile);
+              console.log(`updated profile ${profileName}: ${name} enabled`);
+            }
+
+            if (args.apply) {
+              const results = await applyProfile({ profile, dryRun });
+              console.log(formatResults(results));
+            } else {
+              console.log(
+                dryRun
+                  ? "(dry-run) skip profile write / apply"
+                  : `next: agent-hub apply ${profileName}`,
+              );
+            }
+          },
+        }),
+        list: defineCommand({
+          meta: { description: "List library and active workspace skills" },
+          async run() {
+            await ensureHubLayout();
+            const active = await getActiveProfile();
+            const lib = await listLibrarySkills();
+            console.log(`library (${lib.length}):`);
+            for (const n of lib) console.log(`  ${n}`);
+            if (active) {
+              const ws = await listWorkspaceSkills(active);
+              console.log(`workspace ${active} (${ws.length}):`);
+              for (const n of ws) console.log(`  ${n}`);
+            } else {
+              console.log("workspace: (no active profile)");
+            }
+          },
+        }),
       },
     }),
 
@@ -327,8 +472,8 @@ const main = defineCommand({
         "dry-run": { type: "boolean", description: "Stage apply as dry-run" },
         profile: {
           type: "string",
-          description: "Name written when applying staged cells",
-          default: "tui-session",
+          description:
+            "Profile to open (default: active profile, else first on disk, else tui-session)",
         },
         menu: {
           type: "boolean",
@@ -341,14 +486,37 @@ const main = defineCommand({
         },
       },
       async run({ args }) {
+        await ensureHubLayout();
+        const cfg = await loadConfig();
         const rows = await discoverMatrix();
-        const profileName = String(args.profile);
+        const profileNames = await listProfiles();
+        const active = await getActiveProfile();
+        const profileName =
+          (args.profile ? String(args.profile) : undefined) ??
+          active ??
+          profileNames[0] ??
+          "tui-session";
+
+        let profile: Awaited<ReturnType<typeof loadProfile>> | undefined;
+        try {
+          profile = await loadProfile(profileName);
+        } catch {
+          profile = undefined;
+        }
+
         const dryRun = Boolean(args["dry-run"]);
         const useMenu = Boolean(args.menu) || !process.stdin.isTTY;
 
         let result: TuiResult;
         if (useMenu) {
-          result = await runNumberedMenu({ rows, profileName, dryRun });
+          result = await runNumberedMenu({
+            rows,
+            profileName,
+            profile,
+            profileNames,
+            harnesses: cfg.harnesses,
+            dryRun,
+          });
         } else {
           const hold: { current: TuiResult } = {
             current: { action: "cancel" },
@@ -357,6 +525,9 @@ const main = defineCommand({
             React.createElement(App, {
               rows,
               profileName,
+              profile,
+              profileNames,
+              harnesses: cfg.harnesses,
               dryRun,
               onDone: (r: TuiResult) => {
                 hold.current = r;

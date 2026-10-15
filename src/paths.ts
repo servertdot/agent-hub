@@ -39,6 +39,46 @@ export function hubBackupsDir(): string {
   return join(hubDir(), "backups");
 }
 
+/** Global skill package store (SoT for skill contents). */
+export function hubLibrarySkillsDir(): string {
+  return join(hubDir(), "library", "skills");
+}
+
+export function hubWorkspacesDir(): string {
+  return join(hubDir(), "workspaces");
+}
+
+export function hubWorkspaceDir(profile: string): string {
+  return join(hubWorkspacesDir(), profile);
+}
+
+/** Skills belonging to a profile workspace (symlinks into library). */
+export function hubWorkspaceSkillsDir(profile: string): string {
+  return join(hubWorkspaceDir(profile), "skills");
+}
+
+/** Shared Agent Skills path — must stay empty/parked; harnesses use private dirs. */
+export function agentsSkillsPath(): string {
+  return join(home(), ".agents", "skills");
+}
+
+/** Harness-owned skill install dir (where apply writes symlinks). */
+export function harnessSkillDir(id: HarnessId): string {
+  const h = home();
+  switch (id) {
+    case "cursor":
+      return join(h, ".cursor", "skills");
+    case "claude":
+      return join(h, ".claude", "skills");
+    case "codex":
+      return join(h, ".codex", "skills");
+    case "pi":
+      return join(h, ".pi", "agent", "skills");
+    case "omp":
+      return join(h, ".omp", "agent", "skills");
+  }
+}
+
 /** Default skill / MCP locations per harness (read side). */
 export function harnessPaths(id: HarnessId): {
   skills: string[];
@@ -48,27 +88,28 @@ export function harnessPaths(id: HarnessId): {
   switch (id) {
     case "cursor":
       return {
-        skills: [join(h, ".cursor", "skills"), join(h, ".agents", "skills")],
+        // Shared ~/.agents/skills is parked by workspace apply — do not treat as live.
+        skills: [harnessSkillDir("cursor"), hubLibrarySkillsDir()],
         mcpFiles: [join(h, ".cursor", "mcp.json")],
       };
     case "claude":
       return {
-        skills: [join(h, ".claude", "skills"), join(h, ".agents", "skills")],
+        skills: [harnessSkillDir("claude"), hubLibrarySkillsDir()],
         mcpFiles: [join(h, ".claude.json")],
       };
     case "codex":
       return {
-        skills: [join(h, ".codex", "skills"), join(h, ".agents", "skills")],
+        skills: [harnessSkillDir("codex"), hubLibrarySkillsDir()],
         mcpFiles: [join(h, ".codex", "config.toml")],
       };
     case "pi":
       return {
-        skills: [join(h, ".pi", "agent", "skills"), join(h, ".agents", "skills")],
+        skills: [harnessSkillDir("pi"), hubLibrarySkillsDir()],
         mcpFiles: [join(h, ".pi", "agent", "mcp.json")],
       };
     case "omp":
       return {
-        skills: [join(h, ".omp", "agent", "skills"), join(h, ".agents", "skills")],
+        skills: [harnessSkillDir("omp"), hubLibrarySkillsDir()],
         mcpFiles: [join(h, ".omp", "agent", "mcp.json")],
       };
   }

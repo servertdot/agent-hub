@@ -1,7 +1,16 @@
-import { readdir, lstat, symlink, unlink, mkdir } from "node:fs/promises";
+import {
+  readdir,
+  lstat,
+  symlink,
+  unlink,
+  mkdir,
+  rename,
+  rm,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import type { HarnessId, OpResult, SkillRef } from "../types.ts";
+import { hubLibrarySkillsDir } from "../paths.ts";
 
 /** List skill directories that contain SKILL.md under roots. */
 export async function listSkillDirs(
@@ -32,8 +41,8 @@ export async function listSkillDirs(
 }
 
 /**
- * Enable = ensure symlink (or leave existing dir) at targetDir/name → sourcePath.
- * Disable = remove symlink only (never delete a real directory).
+ * Enable = ensure symlink at targetDir/name → sourcePath.
+ * Disable = remove symlink, or relocate a real directory into the library.
  */
 export async function setSkillLink(opts: {
   harness: HarnessId;
@@ -59,14 +68,17 @@ export async function setSkillLink(opts: {
       };
     }
     if (existsSync(dest)) {
-      return {
-        harness,
-        kind: "skill",
-        name,
-        action: "noop",
-        status: "ok",
-        detail: "already present",
-      };
+      const st = await lstat(dest);
+      if (st.isSymbolicLink() || st.isDirectory()) {
+        return {
+          harness,
+          kind: "skill",
+          name,
+          action: "noop",
+          status: "ok",
+          detail: "already present",
+        };
+      }
     }
     if (dryRun) {
       return {
@@ -102,14 +114,50 @@ export async function setSkillLink(opts: {
     };
   }
   const st = await lstat(dest);
-  if (!st.isSymbolicLink()) {
+  if (st.isSymbolicLink()) {
+    if (dryRun) {
+      return {
+        harness,
+        kind: "skill",
+        name,
+        action: "would-disable",
+        status: "planned",
+        detail: `unlink ${dest}`,
+      };
+    }
+    await unlink(dest);
     return {
       harness,
       kind: "skill",
       name,
-      action: "disable",
-      status: "skipped",
-      detail: "refusing to remove non-symlink directory",
+      action,
+      status: "ok",
+      detail: `unlinked ${dest}`,
+    };
+  }
+
+  // Real directory: absorb into library (or rm duplicate) so harness no longer sees it.
+  const lib = join(hubLibrarySkillsDir(), name);
+  if (!existsSync(lib)) {
+    if (dryRun) {
+      return {
+        harness,
+        kind: "skill",
+        name,
+        action: "would-disable",
+        status: "planned",
+        detail: `would move ${dest} → ${lib}`,
+      };
+    }
+    await mkdir(hubLibrarySkillsDir(), { recursive: true });
+    await rename(dest, lib);
+    return {
+      harness,
+      kind: "skill",
+      name,
+      action,
+      status: "ok",
+      detail: `moved to library ${lib}`,
     };
   }
   if (dryRun) {
@@ -119,16 +167,16 @@ export async function setSkillLink(opts: {
       name,
       action: "would-disable",
       status: "planned",
-      detail: `unlink ${dest}`,
+      detail: `would rm duplicate ${dest} (library has ${name})`,
     };
   }
-  await unlink(dest);
+  await rm(dest, { recursive: true, force: true });
   return {
     harness,
     kind: "skill",
     name,
     action,
     status: "ok",
-    detail: `unlinked ${dest}`,
+    detail: `removed duplicate ${dest}`,
   };
 }

@@ -1,7 +1,6 @@
-import { join } from "node:path";
 import { enabledAdapters } from "./adapters/index.ts";
 import { listSkillDirs } from "./adapters/fs-skills.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, getActiveProfile } from "./config.ts";
 import {
   attachCosts,
   COST_FORMULA,
@@ -9,17 +8,16 @@ import {
   formatTok,
   liveTokenTotal,
 } from "./cost.ts";
-import { home, harnessPaths } from "./paths.ts";
+import {
+  harnessSkillDir,
+  hubLibrarySkillsDir,
+  hubWorkspaceSkillsDir,
+} from "./paths.ts";
 import { HARNESSES, type HarnessId, type MatrixRow } from "./types.ts";
-
-/** Harness-owned skills dir (not the shared ~/.agents pool). */
-function ownedSkillsDir(id: HarnessId): string {
-  return harnessPaths(id).skills[0]!;
-}
 
 /**
  * Build matrix:
- * - skill names = union of shared + all harness skill dirs
+ * - skill names = library ∪ active workspace ∪ harness skill dirs
  * - flags[h] = skill present in that harness's *owned* dir only
  * - mcp flags from each adapter's MCP file
  */
@@ -29,17 +27,19 @@ export async function discoverMatrix(opts?: {
   const withCosts = opts?.withCosts !== false;
   const cfg = await loadConfig();
   const ads = enabledAdapters(cfg.harnesses);
+  const active = await getActiveProfile();
 
-  const sharedRoot = join(home(), ".agents", "skills");
   const allSkillRoots = [
-    sharedRoot,
-    ...HARNESSES.map((id) => ownedSkillsDir(id)),
+    hubLibrarySkillsDir(),
+    ...(active ? [hubWorkspaceSkillsDir(active)] : []),
+    ...HARNESSES.map((id) => harnessSkillDir(id)),
+    ...(cfg.catalog.skillRoots ?? []),
   ];
   const universe = await listSkillDirs(allSkillRoots, "universe");
 
   const ownedByHarness = new Map<HarnessId, Set<string>>();
   for (const ad of ads) {
-    const owned = await listSkillDirs([ownedSkillsDir(ad.id)], ad.id);
+    const owned = await listSkillDirs([harnessSkillDir(ad.id)], ad.id);
     ownedByHarness.set(ad.id, new Set(owned.map((s) => s.name)));
   }
 
@@ -64,10 +64,8 @@ export async function discoverMatrix(opts?: {
       mcpMap.set(m.name, flags);
       if (!mcpBasis.has(m.name)) mcpBasis.set(m.name, m.source);
     }
-    // Fill false for harnesses that don't list this MCP at all — done below
   }
 
-  // Ensure every known MCP name has an explicit boolean per enabled harness
   for (const [name, flags] of mcpMap) {
     for (const ad of ads) {
       if (flags[ad.id] === undefined) flags[ad.id] = false;

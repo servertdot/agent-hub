@@ -1,21 +1,39 @@
 import { adapters, enabledAdapters } from "./adapters/index.ts";
 import { loadConfig, setActiveProfile } from "./config.ts";
 import { HARNESSES, type HarnessId, type OpResult, type Profile } from "./types.ts";
+import {
+  ensureSharedParked,
+  formatWorkspaceOps,
+  migrateSkillsToLibrary,
+  syncWorkspace,
+  workspaceOpsAsResults,
+} from "./workspace.ts";
 
 export type ApplyOptions = {
   profile: Profile;
   dryRun?: boolean;
   /** Limit to one harness. */
   harness?: HarnessId;
+  /** Skip library migrate / shared park (tests). */
+  skipWorkspacePrep?: boolean;
 };
 
 export async function applyProfile(opts: ApplyOptions): Promise<OpResult[]> {
-  const { profile, dryRun = false, harness } = opts;
+  const { profile, dryRun = false, harness, skipWorkspacePrep = false } = opts;
   const cfg = await loadConfig();
   let ads = enabledAdapters(cfg.harnesses);
   if (harness) ads = ads.filter((a) => a.id === harness);
 
   const results: OpResult[] = [];
+
+  if (!skipWorkspacePrep) {
+    const migrated = await migrateSkillsToLibrary({ dryRun });
+    results.push(...workspaceOpsAsResults(migrated));
+    const parked = await ensureSharedParked(dryRun);
+    results.push(...workspaceOpsAsResults([parked]));
+    const wsOps = await syncWorkspace(profile, dryRun);
+    results.push(...workspaceOpsAsResults(wsOps));
+  }
 
   for (const [name, flags] of Object.entries(profile.skills)) {
     for (const id of HARNESSES) {
@@ -102,3 +120,5 @@ export function formatResults(
   parts.push(bits.join(", "));
   return parts.join("\n");
 }
+
+export { formatWorkspaceOps };

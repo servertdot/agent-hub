@@ -13,15 +13,19 @@ import {
 import {
   hubConfigPath,
   hubDir,
+  hubLibrarySkillsDir,
   hubMcpCatalogPath,
   hubProfilesDir,
   hubStatePath,
+  hubWorkspacesDir,
 } from "./paths.ts";
 
 export async function ensureHubLayout(): Promise<void> {
   await mkdir(hubDir(), { recursive: true });
   await mkdir(hubProfilesDir(), { recursive: true });
   await mkdir(dirname(hubMcpCatalogPath()), { recursive: true });
+  await mkdir(hubLibrarySkillsDir(), { recursive: true });
+  await mkdir(hubWorkspacesDir(), { recursive: true });
 
   if (!existsSync(hubConfigPath())) {
     const cfg: HubConfig = HubConfigSchema.parse({});
@@ -37,6 +41,21 @@ export async function loadConfig(): Promise<HubConfig> {
   await ensureHubLayout();
   const raw = await readFile(hubConfigPath(), "utf8");
   return HubConfigSchema.parse(parseYaml(raw) ?? {});
+}
+
+/** Write hub config (merges with current file so catalog/other keys survive). */
+export async function saveConfig(patch: Partial<HubConfig>): Promise<string> {
+  await ensureHubLayout();
+  const current = await loadConfig();
+  const next = HubConfigSchema.parse({
+    ...current,
+    ...patch,
+    harnesses: { ...current.harnesses, ...patch.harnesses },
+    catalog: patch.catalog ?? current.catalog,
+  });
+  const path = hubConfigPath();
+  await writeFile(path, stringifyYaml(next), "utf8");
+  return path;
 }
 
 export async function loadProfile(name: string): Promise<Profile> {
