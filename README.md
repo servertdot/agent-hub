@@ -34,9 +34,10 @@ agent-hub status
 agent-hub discover             # matrix of what is on this machine
 agent-hub import-mcp           # fill catalog/mcp.yaml from Cursor/Claude/OMP JSON
 agent-hub profile save stable  # capture current discovery into a profile
-agent-hub diff stable          # dry-run
+agent-hub diff stable          # dry-run (hides noops; -v for full)
 agent-hub apply stable
-agent-hub tui                  # interactive matrix
+agent-hub tui                  # Ink matrix on a TTY
+agent-hub tui --menu           # numbered fallback (also used without TTY)
 agent-hub tui --dry-run
 ```
 
@@ -87,19 +88,21 @@ Only keys you set are applied. Omitted harness cells are left alone.
 ## Safety
 
 - Disabling a skill **only removes symlinks** we created — never deletes a real skill directory
-- MCP edits merge into existing JSON; Codex TOML apply is stubbed in MVP (`diff`/`apply` report `skipped`)
+- MCP edits merge into existing JSON; Codex TOML flips `enabled` and keeps subtables
 - Prefer `$ENV_NAME` in MCP configs — do not commit secrets
 - Always `diff` / `tui --dry-run` before the first real apply
+- `diff` / `apply` hide noop rows by default; pass `-v` / `--verbose` for the full log
 
 ## Status (0.1)
 
 - discover / profiles / Ink TUI (stage → apply)
+- numbered menu fallback (`tui --menu` or non-TTY)
 - skill symlink enable/disable (never deletes real dirs)
 - JSON MCP apply (Cursor / Claude / pi / OMP), JSONC-aware
 - Codex TOML MCP apply via `enabled = true|false` (keeps subtables like `.env`)
 - `import-mcp` → `~/.agent-hub/catalog/mcp.yaml`
 
-Next: cost estimates, numbered non-TTY fallback, prune unused catalog entries.
+Next: cost estimates, prune unused catalog entries, secret scrubbing on import.
 
 ## License
 

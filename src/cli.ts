@@ -14,7 +14,9 @@ import { discoverMatrix, formatMatrix } from "./discover.ts";
 import { hubDir } from "./paths.ts";
 import { adapters } from "./adapters/index.ts";
 import { HARNESSES, type HarnessId } from "./types.ts";
-import { App, type TuiResult } from "./tui/App.tsx";
+import { App } from "./tui/App.tsx";
+import { runNumberedMenu } from "./tui/menu.ts";
+import type { TuiResult } from "./tui/types.ts";
 import {
   captureProfileFromDiscovery,
   importMcpCatalog,
@@ -91,6 +93,11 @@ const main = defineCommand({
       args: {
         profile: { type: "positional", required: true, description: "Profile name" },
         harness: { type: "string", description: "Limit to one harness" },
+        verbose: {
+          type: "boolean",
+          description: "Show noop rows too",
+          alias: "v",
+        },
       },
       async run({ args }) {
         const profile = await loadProfile(String(args.profile));
@@ -102,7 +109,9 @@ const main = defineCommand({
           dryRun: true,
           harness,
         });
-        console.log(formatResults(results));
+        console.log(
+          formatResults(results, { verbose: Boolean(args.verbose) }),
+        );
       },
     }),
 
@@ -112,6 +121,11 @@ const main = defineCommand({
         profile: { type: "positional", required: true, description: "Profile name" },
         harness: { type: "string", description: "Limit to one harness" },
         "dry-run": { type: "boolean", description: "Plan only" },
+        verbose: {
+          type: "boolean",
+          description: "Show noop rows too",
+          alias: "v",
+        },
       },
       async run({ args }) {
         const profile = await loadProfile(String(args.profile));
@@ -123,7 +137,9 @@ const main = defineCommand({
           dryRun: Boolean(args["dry-run"]),
           harness,
         });
-        console.log(formatResults(results));
+        console.log(
+          formatResults(results, { verbose: Boolean(args.verbose) }),
+        );
       },
     }),
 
@@ -180,7 +196,10 @@ const main = defineCommand({
     }),
 
     tui: defineCommand({
-      meta: { description: "Interactive matrix (agent-toggle style)" },
+      meta: {
+        description:
+          "Interactive matrix (Ink TUI on a TTY; numbered menu otherwise)",
+      },
       args: {
         "dry-run": { type: "boolean", description: "Stage apply as dry-run" },
         profile: {
@@ -188,27 +207,43 @@ const main = defineCommand({
           description: "Name written when applying staged cells",
           default: "tui-session",
         },
+        menu: {
+          type: "boolean",
+          description: "Force numbered menu even on a TTY",
+        },
+        verbose: {
+          type: "boolean",
+          description: "Show noop rows in apply output",
+          alias: "v",
+        },
       },
       async run({ args }) {
-        if (!process.stdin.isTTY) {
-          console.error("tui requires a TTY; use discover / apply instead");
-          process.exitCode = 2;
-          return;
-        }
         const rows = await discoverMatrix();
-        const hold: { current: TuiResult } = { current: { action: "cancel" } };
-        const { waitUntilExit } = render(
-          React.createElement(App, {
-            rows,
-            profileName: String(args.profile),
-            dryRun: Boolean(args["dry-run"]),
-            onDone: (r: TuiResult) => {
-              hold.current = r;
-            },
-          }),
-        );
-        await waitUntilExit();
-        const result = hold.current;
+        const profileName = String(args.profile);
+        const dryRun = Boolean(args["dry-run"]);
+        const useMenu = Boolean(args.menu) || !process.stdin.isTTY;
+
+        let result: TuiResult;
+        if (useMenu) {
+          result = await runNumberedMenu({ rows, profileName, dryRun });
+        } else {
+          const hold: { current: TuiResult } = {
+            current: { action: "cancel" },
+          };
+          const { waitUntilExit } = render(
+            React.createElement(App, {
+              rows,
+              profileName,
+              dryRun,
+              onDone: (r: TuiResult) => {
+                hold.current = r;
+              },
+            }),
+          );
+          await waitUntilExit();
+          result = hold.current;
+        }
+
         if (result.action === "cancel") {
           console.log("cancelled");
           return;
@@ -217,7 +252,9 @@ const main = defineCommand({
           profile: result.profile,
           dryRun: result.dryRun,
         });
-        console.log(formatResults(results));
+        console.log(
+          formatResults(results, { verbose: Boolean(args.verbose) }),
+        );
       },
     }),
   },

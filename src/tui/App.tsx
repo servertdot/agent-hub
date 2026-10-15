@@ -3,6 +3,7 @@ import { Box, Text, useApp, useInput } from "ink";
 import type { HarnessId, MatrixRow, Profile } from "../types.ts";
 import { HARNESSES } from "../types.ts";
 import { glyphs, roles } from "./theme.ts";
+import type { TuiResult } from "./types.ts";
 import {
   cellKey,
   effectiveFlag,
@@ -13,9 +14,7 @@ import {
   type ViewState,
 } from "./model.ts";
 
-export type TuiResult =
-  | { action: "cancel" }
-  | { action: "apply"; profile: Profile; dryRun: boolean };
+export type { TuiResult };
 
 type Props = {
   rows: MatrixRow[];
