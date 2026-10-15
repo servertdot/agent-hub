@@ -36,6 +36,17 @@ Inspired by [agent-toggle](https://github.com/weskao/agent-toggle)’s TUI — b
 
 No GUI. Config + CLI + TUI.
 
+## Agent skill
+
+Bundled skill for coding agents: [`skills/agent-hub/SKILL.md`](skills/agent-hub/SKILL.md)  
+(also linked at `.agents/skills/agent-hub` and `.cursor/skills/agent-hub` for project discovery).
+
+Install into an agent-hub profile:
+
+```bash
+agent-hub skill install ./skills/agent-hub --apply
+```
+
 ## Install
 
 ```bash
