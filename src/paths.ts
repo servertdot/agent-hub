@@ -1,5 +1,7 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { HarnessId } from "./types.ts";
 
 export function home(): string {
@@ -10,6 +12,49 @@ export function expandHome(p: string): string {
   if (p === "~") return home();
   if (p.startsWith("~/")) return join(home(), p.slice(2));
   return p;
+}
+
+/**
+ * Repo / package root for this agent-hub install (parent of `src/` or `dist/`).
+ * Relative skill paths that miss from cwd fall back here so
+ * `agent-hub skill install ./skills/agent-hub` works from any directory.
+ */
+export function packageRoot(): string {
+  // paths.ts lives in src/ or dist/
+  return fileURLToPath(new URL("..", import.meta.url));
+}
+
+function hasSkillMd(dir: string): boolean {
+  return existsSync(join(dir, "SKILL.md"));
+}
+
+/**
+ * Resolve a skill install path from any cwd:
+ * 1. expand ~ and resolve against cwd
+ * 2. if missing, resolve the same relative path against the agent-hub package root
+ * 3. if bare name (no path sep), try `<packageRoot>/skills/<name>`
+ */
+export function resolveSkillInstallPath(input: string): string {
+  const expanded = expandHome(input.trim());
+  const candidates: string[] = [];
+
+  if (isAbsolute(expanded)) {
+    candidates.push(expanded);
+  } else {
+    candidates.push(resolve(process.cwd(), expanded));
+    candidates.push(resolve(packageRoot(), expanded));
+    // bare skill name → bundled skills/<name>
+    if (!expanded.includes("/") && !expanded.includes("\\")) {
+      candidates.push(join(packageRoot(), "skills", expanded));
+    }
+  }
+
+  for (const c of candidates) {
+    if (hasSkillMd(c)) return c;
+  }
+
+  // Prefer cwd-resolved path in the error (first candidate).
+  return candidates[0]!;
 }
 
 /** Hub state directory (config, profiles, catalog). */

@@ -53,7 +53,9 @@ agent-hub discover
 agent-hub diff <profile>
 agent-hub apply <profile>          # activate + project + prune extras
 
-agent-hub skill install <path> [--profile X] [--apply]
+agent-hub skill install <path|name> [--profile X] [--apply]
+  # path: absolute, ~/…, or relative (cwd, then agent-hub package root)
+  # bare name: <package>/skills/<name> (e.g. agent-hub)
 agent-hub skill remove <name> [--profile X] [--apply]
 agent-hub skill adopt <name> [--apply]          # orphan library → active
 agent-hub skill copy <name…> --from A --to B [--apply]

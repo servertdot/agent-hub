@@ -44,10 +44,9 @@ Bundled skill for coding agents: [`skills/agent-hub/SKILL.md`](skills/agent-hub/
 Install into an agent-hub profile:
 
 ```bash
-cd /path/to/agent-hub
+# from any directory — relative paths also fall back to the agent-hub package root
 agent-hub skill install ./skills/agent-hub --apply
-# or absolute:
-# agent-hub skill install ~/personal/projects/agent-hub/skills/agent-hub --apply
+agent-hub skill install agent-hub --apply
 ```
 
 ## Install

@@ -19,6 +19,8 @@ import {
   hubLibrarySkillsDir,
   hubWorkspaceSkillsDir,
   hubWorkspacesDir,
+  packageRoot,
+  resolveSkillInstallPath,
 } from "./paths.ts";
 
 export type WorkspaceOp = {
@@ -375,17 +377,13 @@ export async function installSkillToWorkspace(opts: {
     "./ownership.ts"
   );
   const dryRun = opts.dryRun ?? false;
-  const source = resolve(opts.sourcePath);
+  const source = resolveSkillInstallPath(opts.sourcePath);
   const name = basename(source);
   const skillMd = join(source, "SKILL.md");
   if (!existsSync(skillMd)) {
-    const cwd = process.cwd();
-    const hint =
-      opts.sourcePath.startsWith(".") || !opts.sourcePath.startsWith("/")
-        ? ` (resolved from cwd ${cwd})`
-        : "";
     throw new Error(
-      `not a skill directory (missing SKILL.md): ${source}${hint}`,
+      `not a skill directory (missing SKILL.md): ${source}` +
+        ` (tried cwd ${process.cwd()} and package ${packageRoot()})`,
     );
   }
 

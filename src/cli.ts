@@ -286,7 +286,8 @@ const main = defineCommand({
             path: {
               type: "positional",
               required: true,
-              description: "Path to skill directory (contains SKILL.md)",
+              description:
+                "Skill dir or bare name (./path, ~/path, or skills/<name> from the agent-hub package — works from any cwd)",
             },
             profile: {
               type: "string",
