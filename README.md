@@ -128,6 +128,7 @@ Skill with **all harnesses false** → removed from workspace and from harness d
 - Selecting a profile in the sidebar **loads** it for editing — it does **not** apply
 - Enter applies (save profile + workspace sync + harness projection); Esc cancels
 - `w` saves profile YAML only
+- `c` copy focused skill / `C` copy all visible skills → pick target profile in sidebar (Enter)
 
 ## Safety
 

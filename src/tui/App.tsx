@@ -5,6 +5,7 @@ import { HARNESSES } from "../types.ts";
 import { loadProfile, saveConfig, saveProfile } from "../config.ts";
 import { discoverMatrix } from "../discover.ts";
 import { formatTok, liveTokenTotal } from "../cost.ts";
+import { copySkillsBetweenProfiles } from "../workspace.ts";
 import { glyphs, roles } from "./theme.ts";
 import type { TuiResult } from "./types.ts";
 import {
@@ -57,7 +58,7 @@ export type { TuiResult };
 const NAME_WIDTH = 28;
 const LIST_TOP = BODY_TOP + MAIN_LIST_CHROME;
 
-type Mode = "main" | "search" | "newName";
+type Mode = "main" | "search" | "newName" | "copyTarget";
 type FocusPane = "sidebar" | "main";
 
 type Props = {
@@ -117,6 +118,8 @@ export function App({
   const [flash, setFlash] = useState<string | null>(null);
   const [col, setCol] = useState(0);
   const [busy, setBusy] = useState(false);
+  /** Skill names waiting for a target profile (copy mode). */
+  const [copyNames, setCopyNames] = useState<string[] | null>(null);
 
   useEffect(() => {
     const onResize = () => setTermRows(stdout?.rows ?? 24);
@@ -191,6 +194,65 @@ export function App({
     setFlash(
       `${mainTabLabel(kind)}: all ${enabled ? "on" : "off"} (${scope})`,
     );
+  };
+
+  const beginCopy = (skillNames: string[]) => {
+    const list = skillNames.filter(Boolean);
+    if (!list.length) {
+      setFlash("nothing to copy");
+      return;
+    }
+    if (names.length < 2) {
+      setFlash("need another profile to copy into");
+      return;
+    }
+    setCopyNames(list);
+    setMode("copyTarget");
+    setFocus("sidebar");
+    const sideIdx = names.findIndex((n) => n !== state.profileName);
+    setSideCursor(sideIdx >= 0 ? sideIdx : 0);
+    setFlash(
+      list.length === 1
+        ? `copy ${list[0]} → pick profile (Enter) · Esc cancel`
+        : `copy ${list.length} skills → pick profile (Enter) · Esc cancel`,
+    );
+  };
+
+  const cancelCopy = () => {
+    setCopyNames(null);
+    setMode("main");
+    setFocus("main");
+    setFlash("copy cancelled");
+  };
+
+  const finishCopyTo = async (toProfile: string) => {
+    if (!copyNames?.length) return;
+    if (toProfile === state.profileName) {
+      setFlash("pick a different profile");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { copied, skipped } = await copySkillsBetweenProfiles({
+        fromProfile: state.profileName,
+        toProfile,
+        names: copyNames,
+      });
+      setFlash(
+        `copied ${copied.length} → ${toProfile}` +
+          (skipped.length ? ` · skipped ${skipped.length}` : "") +
+          " · apply that profile to project",
+      );
+      setCopyNames(null);
+      setMode("main");
+      setFocus("main");
+    } catch (err) {
+      setFlash(
+        `copy failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setBusy(false);
+    }
   };
 
   const applyHarnessToggle = (id: HarnessId) => {
@@ -275,11 +337,25 @@ export function App({
     if (side) {
       setFocus("sidebar");
       if (side.type === "new") {
+        if (mode === "copyTarget") {
+          setFlash("pick an existing profile");
+          return;
+        }
         startNewProfile();
         return;
       }
       setSideCursor(side.index);
+      if (mode === "copyTarget") {
+        void finishCopyTo(side.name);
+        return;
+      }
       void selectProfile(side.name);
+      return;
+    }
+
+    if (mode === "copyTarget") {
+      // Stay in copy mode until Esc / profile pick.
+      setFocus("sidebar");
       return;
     }
 
@@ -337,6 +413,33 @@ export function App({
       }
       if (input && !key.ctrl) {
         setState((s) => ({ ...s, query: s.query + input, cursor: 0 }));
+      }
+      return;
+    }
+
+    if (mode === "copyTarget") {
+      if (key.escape) {
+        cancelCopy();
+        return;
+      }
+      if (focus !== "sidebar") setFocus("sidebar");
+      const maxIdx = Math.max(0, names.length - 1);
+      if (key.upArrow || input === "k") {
+        setSideCursor((c) => Math.max(0, c - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setSideCursor((c) => Math.min(maxIdx, c + 1));
+        return;
+      }
+      if (key.return || key.rightArrow) {
+        const name = names[sideCursor];
+        if (name) void finishCopyTo(name);
+        return;
+      }
+      if (key.ctrl && input === "c") {
+        onDone({ action: "cancel" });
+        exit();
       }
       return;
     }
@@ -486,6 +589,18 @@ export function App({
       return;
     }
 
+    // c = copy focused skill; C = copy all visible skills (current filter)
+    if (input === "c" && state.mainTab === "skill") {
+      const row = shown[state.cursor];
+      if (row) beginCopy([row.name]);
+      else setFlash("nothing to copy");
+      return;
+    }
+    if (input === "C" && state.mainTab === "skill") {
+      beginCopy(shown.map((r) => r.name));
+      return;
+    }
+
     if (input === "/" && isResourceTab(state.mainTab)) {
       setMode("search");
       return;
@@ -621,9 +736,11 @@ export function App({
   });
 
   const title = `agent-hub  ${state.profileName}${dirty ? "*" : ""}  ${
-    state.mainTab === "harness"
-      ? `${countEnabledHarnesses(state.harnessEnabled)}/${HARNESSES.length} harnesses`
-      : `${shown.length} ${mainTabLabel(state.mainTab).toLowerCase()} · ~${formatTok(liveTok)} tok · ${stagedCount} staged`
+    mode === "copyTarget" && copyNames
+      ? `COPY ${copyNames.length} → pick profile`
+      : state.mainTab === "harness"
+        ? `${countEnabledHarnesses(state.harnessEnabled)}/${HARNESSES.length} harnesses`
+        : `${shown.length} ${mainTabLabel(state.mainTab).toLowerCase()} · ~${formatTok(liveTok)} tok · ${stagedCount} staged`
   }${harnessDirty ? " · harness*" : ""}${dryRun ? " · dry-run" : ""}`;
 
   const rangeLabel =
@@ -653,9 +770,15 @@ export function App({
         <Box flexDirection="column" width={SIDEBAR_WIDTH - 1} height={bodyH}>
           <Text
             bold
-            color={focus === "sidebar" ? roles.pending : roles.muted}
+            color={
+              mode === "copyTarget"
+                ? roles.pending
+                : focus === "sidebar"
+                  ? roles.pending
+                  : roles.muted
+            }
           >
-            Profiles
+            {mode === "copyTarget" ? "Copy to…" : "Profiles"}
           </Text>
           {mode === "newName" ? (
             <Text color={roles.pending}>
@@ -820,7 +943,9 @@ export function App({
         <Text color={roles.muted}>
           {flash
             ? flash
-            : "[ ] panes  1/2/3 tabs  click [●]/[○]  e/d all  w save  Enter apply  Tab toggle  Esc"}
+            : mode === "copyTarget"
+              ? "↑↓ pick profile  Enter copy  Esc cancel"
+              : "[ ] panes  1/2/3 tabs  c/C copy  w save  Enter apply  Tab toggle  Esc"}
         </Text>
       </Box>
     </Box>
