@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import type { HarnessId, MatrixRow, Profile } from "../types.ts";
 import { HARNESSES } from "../types.ts";
+import { formatTok, liveTokenTotal } from "../cost.ts";
 import { glyphs, roles } from "./theme.ts";
 import type { TuiResult } from "./types.ts";
 import {
@@ -32,6 +33,7 @@ export function App({ rows, profileName = "tui-session", dryRun = false, onDone 
     harnessTab: "all",
     kindFilter: "all",
     query: "",
+    sort: "name",
   });
   const [searching, setSearching] = useState(false);
   const [col, setCol] = useState(0);
@@ -39,6 +41,11 @@ export function App({ rows, profileName = "tui-session", dryRun = false, onDone 
   const shown = useMemo(() => visibleRows(state), [state]);
   const cols = harnessColumns(state.harnessTab);
   const stagedCount = state.staged.size;
+  const liveTok = useMemo(() => {
+    const harness =
+      state.harnessTab === "all" ? undefined : state.harnessTab;
+    return liveTokenTotal(shown, harness);
+  }, [shown, state.harnessTab]);
 
   useInput((input, key) => {
     if (searching) {
@@ -141,9 +148,18 @@ export function App({ rows, profileName = "tui-session", dryRun = false, onDone 
       setCol(0);
       return;
     }
+
+    if (input === "s") {
+      setState((s) => ({
+        ...s,
+        sort: s.sort === "name" ? "cost" : "name",
+        cursor: 0,
+      }));
+      return;
+    }
   });
 
-  const title = `agent-hub  ${shown.length} resources · ${stagedCount} staged${
+  const title = `agent-hub  ${shown.length} resources · ~${formatTok(liveTok)} tok live · ${stagedCount} staged${
     dryRun ? " · dry-run" : ""
   }`;
 
@@ -153,13 +169,14 @@ export function App({ rows, profileName = "tui-session", dryRun = false, onDone 
         {title}
       </Text>
       <Text color={roles.muted}>
-        tab:{state.harnessTab}  type:{state.kindFilter} {" "}
+        tab:{state.harnessTab}  type:{state.kindFilter}  sort:{state.sort} {" "}
         {searching ? `search> ${state.query}█` : state.query ? `filter:${state.query}` : ""}
       </Text>
       <Box marginTop={1} flexDirection="column">
         <Text color={roles.muted}>
           {"  "}
           {"".padEnd(18)}
+          {"tok".padStart(6)}
           {cols.map((h) => h.slice(0, 6).padStart(7)).join("")}
         </Text>
         {shown.slice(0, 30).map((row, i) => (
@@ -178,7 +195,7 @@ export function App({ rows, profileName = "tui-session", dryRun = false, onDone 
       </Box>
       <Box marginTop={1}>
         <Text color={roles.muted}>
-          ↑↓ move  ←→ harness  Tab toggle  / search  t type  h tab  Enter apply  Esc cancel
+          ↑↓ move  ←→ harness  Tab toggle  / search  t type  h tab  s sort  Enter apply  Esc cancel
         </Text>
       </Box>
     </Box>
@@ -199,12 +216,14 @@ function RowView({
   staged: ViewState["staged"];
 }) {
   const label = `${row.kind === "skill" ? "sk" : "mc"} ${row.name}`.slice(0, 18).padEnd(18);
+  const tok = formatTok(row.tokens ?? 0).padStart(6);
   return (
     <Box>
       <Text color={selected ? roles.cursor : undefined} inverse={selected}>
         {selected ? `${glyphs.pointer} ` : "  "}
         {label}
       </Text>
+      <Text color={roles.muted}>{tok}</Text>
       {cols.map((h, i) => {
         const live = row.flags[h];
         const eff = effectiveFlag(row, h, staged);

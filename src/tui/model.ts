@@ -13,6 +13,8 @@ export function cellKey(
   return `${kind}:${name}:${harness}`;
 }
 
+export type SortMode = "name" | "cost";
+
 export type ViewState = {
   rows: MatrixRow[];
   /** Staged desired flags; absent = use live flags. */
@@ -21,6 +23,7 @@ export type ViewState = {
   harnessTab: "all" | HarnessId;
   kindFilter: "all" | ResourceKind;
   query: string;
+  sort: SortMode;
 };
 
 export function effectiveFlag(
@@ -56,7 +59,7 @@ export function toggleCell(
 
 export function visibleRows(state: ViewState): MatrixRow[] {
   const q = state.query.trim().toLowerCase();
-  return state.rows.filter((r) => {
+  const filtered = state.rows.filter((r) => {
     if (state.kindFilter !== "all" && r.kind !== state.kindFilter) return false;
     if (state.harnessTab !== "all" && r.flags[state.harnessTab] === undefined) {
       // still show if staged for that harness
@@ -64,6 +67,16 @@ export function visibleRows(state: ViewState): MatrixRow[] {
     }
     if (!q) return true;
     return r.name.toLowerCase().includes(q) || r.kind.includes(q);
+  });
+  if (state.sort === "cost") {
+    return [...filtered].sort((a, b) => {
+      const d = (b.tokens ?? 0) - (a.tokens ?? 0);
+      return d !== 0 ? d : a.name.localeCompare(b.name);
+    });
+  }
+  return [...filtered].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind.localeCompare(b.kind);
+    return a.name.localeCompare(b.name);
   });
 }
 

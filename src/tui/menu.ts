@@ -2,6 +2,7 @@ import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import type { HarnessId, MatrixRow, Profile } from "../types.ts";
 import { HARNESSES } from "../types.ts";
+import { formatTok, liveTokenTotal } from "../cost.ts";
 import {
   cellKey,
   effectiveFlag,
@@ -30,6 +31,7 @@ export async function runNumberedMenu(opts: {
     harnessTab: "all",
     kindFilter: "all",
     query: "",
+    sort: "name",
   };
   let col = 0;
   const cols: HarnessId[] = [...HARNESSES];
@@ -38,13 +40,14 @@ export async function runNumberedMenu(opts: {
   try {
     for (;;) {
       const shown = visibleRows(state);
+      const liveTok = liveTokenTotal(shown);
       output.write(
-        `\nagent-hub menu  ${shown.length} shown · ${state.staged.size} staged${
+        `\nagent-hub menu  ${shown.length} shown · ~${formatTok(liveTok)} tok live · ${state.staged.size} staged${
           dryRun ? " · dry-run" : ""
         }\n`,
       );
       output.write(
-        `  type=${state.kindFilter}  filter=${state.query || "(none)"}  col=${cols[col]}\n`,
+        `  type=${state.kindFilter}  sort=${state.sort}  filter=${state.query || "(none)"}  col=${cols[col]}\n`,
       );
       const page = shown.slice(0, 40);
       for (let i = 0; i < page.length; i++) {
@@ -60,15 +63,16 @@ export async function runNumberedMenu(opts: {
             return `${focus}${mark}${g}`;
           })
           .join("");
+        const tok = formatTok(row.tokens ?? 0).padStart(5);
         output.write(
-          `  ${String(i + 1).padStart(3)}  ${row.kind.slice(0, 2)} ${row.name.padEnd(28).slice(0, 28)} ${cells}\n`,
+          `  ${String(i + 1).padStart(3)}  ${row.kind.slice(0, 2)} ${row.name.padEnd(28).slice(0, 28)} ${tok} ${cells}\n`,
         );
       }
       if (shown.length > 40) {
         output.write(`  … ${shown.length - 40} more (narrow with /text)\n`);
       }
       output.write(
-        "  n <#> toggle · ←→ via h · t type · /q filter · a apply · q quit\n> ",
+        "  n <#> toggle · h col · t type · s sort · /q filter · a apply · q quit\n> ",
       );
 
       const line = (await rl.question("")).trim();
@@ -98,6 +102,14 @@ export async function runNumberedMenu(opts: {
       }
       if (line === "h") {
         col = (col + 1) % cols.length;
+        continue;
+      }
+      if (line === "s") {
+        state = {
+          ...state,
+          sort: state.sort === "name" ? "cost" : "name",
+          cursor: 0,
+        };
         continue;
       }
       if (line.startsWith("/")) {

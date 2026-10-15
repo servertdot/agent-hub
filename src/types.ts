@@ -85,4 +85,9 @@ export type MatrixRow = {
   flags: Partial<Record<HarnessId, boolean>>;
   /** Live discovery hint (path or source). */
   basis?: string;
+  /** Startup token estimate (ceil(chars/4) or MCP flat). */
+  tokens?: number;
+  chars?: number;
+  description?: string;
+  costBasis?: string;
 };

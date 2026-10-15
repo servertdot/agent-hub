@@ -10,7 +10,12 @@ import {
   loadConfig,
   loadProfile,
 } from "./config.ts";
-import { discoverMatrix, formatMatrix } from "./discover.ts";
+import {
+  discoverMatrix,
+  formatMatrix,
+  formatMatrixFooter,
+} from "./discover.ts";
+import { sortByCost } from "./cost.ts";
 import { hubDir } from "./paths.ts";
 import { adapters } from "./adapters/index.ts";
 import { HARNESSES, type HarnessId } from "./types.ts";
@@ -86,11 +91,52 @@ const main = defineCommand({
     }),
 
     discover: defineCommand({
-      meta: { description: "Print skill/MCP matrix discovered on this machine" },
+      meta: {
+        description:
+          "Print skill/MCP matrix discovered on this machine (with token estimates)",
+      },
       async run() {
         const rows = await discoverMatrix();
         console.log(formatMatrix(rows));
-        console.log(`\n${rows.length} resources`);
+        console.log(`\n${formatMatrixFooter(rows)}`);
+      },
+    }),
+
+    cost: defineCommand({
+      meta: {
+        description:
+          "Startup token estimates, biggest first (same formula as discover)",
+      },
+      args: {
+        type: {
+          type: "string",
+          description: "Filter: skill | mcp",
+        },
+        limit: {
+          type: "string",
+          description: "Max rows (default 40)",
+          default: "40",
+        },
+      },
+      async run({ args }) {
+        let rows = await discoverMatrix();
+        const type = args.type ? String(args.type) : undefined;
+        if (type === "skill" || type === "mcp") {
+          rows = rows.filter((r) => r.kind === type);
+        }
+        rows = sortByCost(rows, "desc");
+        const limit = Math.max(1, Number(args.limit) || 40);
+        const slice = rows.slice(0, limit);
+        console.log(`tok\tkind\tname\tbasis`);
+        for (const r of slice) {
+          console.log(
+            `${r.tokens ?? 0}\t${r.kind}\t${r.name}\t${r.costBasis ?? ""}`,
+          );
+        }
+        if (rows.length > limit) {
+          console.log(`… ${rows.length - limit} more`);
+        }
+        console.log(`\n${formatMatrixFooter(rows)}`);
       },
     }),
 

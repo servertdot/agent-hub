@@ -2,6 +2,13 @@ import { join } from "node:path";
 import { enabledAdapters } from "./adapters/index.ts";
 import { listSkillDirs } from "./adapters/fs-skills.ts";
 import { loadConfig } from "./config.ts";
+import {
+  attachCosts,
+  COST_FORMULA,
+  costSummary,
+  formatTok,
+  liveTokenTotal,
+} from "./cost.ts";
 import { home, harnessPaths } from "./paths.ts";
 import { HARNESSES, type HarnessId, type MatrixRow } from "./types.ts";
 
@@ -16,7 +23,10 @@ function ownedSkillsDir(id: HarnessId): string {
  * - flags[h] = skill present in that harness's *owned* dir only
  * - mcp flags from each adapter's MCP file
  */
-export async function discoverMatrix(): Promise<MatrixRow[]> {
+export async function discoverMatrix(opts?: {
+  withCosts?: boolean;
+}): Promise<MatrixRow[]> {
+  const withCosts = opts?.withCosts !== false;
   const cfg = await loadConfig();
   const ads = enabledAdapters(cfg.harnesses);
 
@@ -86,19 +96,32 @@ export async function discoverMatrix(): Promise<MatrixRow[]> {
       basis: mcpBasis.get(name),
     });
   }
-  return rows;
+  return withCosts ? attachCosts(rows) : rows;
 }
 
 export function formatMatrix(rows: MatrixRow[]): string {
   const cols = HARNESSES;
-  const header = ["kind", "name", ...cols].join("\t");
+  const header = ["kind", "name", "tok", ...cols].join("\t");
   const lines = rows.map((r) => {
     const cells = cols.map((h) => {
       const v = r.flags[h];
       if (v === undefined) return "-";
       return v ? "●" : "○";
     });
-    return [r.kind, r.name, ...cells].join("\t");
+    const tok = r.tokens != null ? String(r.tokens) : "-";
+    return [r.kind, r.name, tok, ...cells].join("\t");
   });
   return [header, ...lines].join("\n");
 }
+
+export function formatMatrixFooter(rows: MatrixRow[]): string {
+  const s = costSummary(rows);
+  return [
+    `${s.resources} resources · ~${formatTok(s.liveTokens)} tok live`,
+    `  skills: ${s.byKind.skill.count} (~${formatTok(s.byKind.skill.liveTokens)} live)`,
+    `  mcp: ${s.byKind.mcp.count} (~${formatTok(s.byKind.mcp.liveTokens)} live)`,
+    `formula: ${COST_FORMULA}`,
+  ].join("\n");
+}
+
+export { liveTokenTotal, formatTok };

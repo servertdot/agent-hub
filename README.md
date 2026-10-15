@@ -31,7 +31,8 @@ Requires Node 22+ or Bun.
 ```bash
 agent-hub init                 # ~/.agent-hub + example profiles
 agent-hub status
-agent-hub discover             # matrix of what is on this machine
+agent-hub discover             # matrix + token estimates
+agent-hub cost                 # biggest startup costs first
 agent-hub import-mcp           # fill catalog/mcp.yaml from Cursor/Claude/OMP JSON
 agent-hub scrub-catalog        # replace pasted secrets with $ENV refs
 agent-hub scrub-harnesses      # dry-run scrub of Cursor/Claude/Codex/pi/OMP MCP files
@@ -85,7 +86,8 @@ Only keys you set are applied. Omitted harness cells are left alone.
 - `●` live / `○` off / `-` unknown
 - `+` / `-` before glyph = staged change
 - Tab toggles focused cell; ←→ moves harness column; ↑↓ rows
-- `/` search, `t` filter skill|mcp, `h` harness tab
+- `/` search, `t` filter skill|mcp, `h` harness tab, `s` sort name|cost
+- tok column + title `~Xk tok live` (ceil(chars/4); MCP flat 1500)
 - Enter applies staged cells; Esc cancels
 - Nothing is written while the picker is open
 
@@ -103,13 +105,14 @@ Only keys you set are applied. Omitted harness cells are left alone.
 
 - discover / profiles / Ink TUI (stage → apply)
 - numbered menu fallback (`tui --menu` or non-TTY)
+- cost estimates: `discover` footer, `cost` command, TUI tok column + `s` sort
 - skill symlink enable/disable (never deletes real dirs)
 - JSON MCP apply (Cursor / Claude / pi / OMP), JSONC-aware
 - Codex TOML MCP apply via `enabled = true|false` (keeps subtables like `.env`)
 - `import-mcp` + `scrub-catalog` + `scrub-harnesses --write` for secret hygiene
 - `profile seed-lab` — clone stable with omp-only experimental skills
 
-Next: cost estimates, prune unused catalog entries.
+Next: prune unused catalog entries.
 
 ## License
 

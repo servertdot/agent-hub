@@ -22,6 +22,7 @@ function base(over: Partial<ViewState> = {}): ViewState {
     harnessTab: "all",
     kindFilter: "all",
     query: "",
+    sort: "name",
     ...over,
   };
 }
@@ -44,5 +45,15 @@ describe("tui model", () => {
     ];
     const s = base({ rows, query: "ff", kindFilter: "mcp" });
     expect(visibleRows(s).map((r) => r.name)).toEqual(["fff"]);
+  });
+
+  test("sort by cost desc", () => {
+    const rows: MatrixRow[] = [
+      { kind: "skill", name: "tiny", flags: { cursor: true }, tokens: 10 },
+      { kind: "mcp", name: "heavy", flags: { cursor: true }, tokens: 1500 },
+      { kind: "skill", name: "mid", flags: { cursor: true }, tokens: 100 },
+    ];
+    const s = base({ rows, sort: "cost" });
+    expect(visibleRows(s).map((r) => r.name)).toEqual(["heavy", "mid", "tiny"]);
   });
 });
